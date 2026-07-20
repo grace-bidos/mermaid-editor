@@ -269,6 +269,35 @@ select {
   stroke-width: 3px !important;
 }
 
+.node-annotation-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.node-shape-annotation {
+  position: absolute;
+  max-width: 8rem;
+  overflow: hidden;
+  padding: 0.2rem 0.42rem;
+  transform: translate(-82%, -38%);
+  border: 1px solid rgb(255 255 255 / 88%);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 88%);
+  color: #636366;
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 8%),
+    0 4px 12px rgb(0 0 0 / 8%);
+  font-size: 0.625rem;
+  font-weight: 650;
+  line-height: 1.15;
+  letter-spacing: 0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  backdrop-filter: blur(12px) saturate(180%);
+}
+
 .node-label-editor {
   position: fixed;
   z-index: 50;
@@ -340,6 +369,10 @@ select {
   width: 100%;
   height: auto;
   max-height: 100%;
+}
+
+.preview {
+  position: relative;
 }
 
 .empty-preview {
@@ -442,6 +475,12 @@ select {
     color: #f5f5f7;
   }
 
+  .node-shape-annotation {
+    border-color: rgb(255 255 255 / 10%);
+    background: rgb(58 58 60 / 90%);
+    color: #d1d1d6;
+  }
+
   .action-button {
     border-color: rgb(255 255 255 / 9%);
     background: rgb(58 58 60 / 82%);
@@ -487,7 +526,8 @@ select {
 @media (prefers-reduced-transparency: reduce) {
   .chrome,
   .action-button,
-  .node-toolbar {
+  .node-toolbar,
+  .node-shape-annotation {
     background: #fff;
     backdrop-filter: none;
   }
@@ -496,7 +536,8 @@ select {
 @media (prefers-color-scheme: dark) and (prefers-reduced-transparency: reduce) {
   .chrome,
   .action-button,
-  .node-toolbar {
+  .node-toolbar,
+  .node-shape-annotation {
     background: #2c2c2e;
   }
 }

@@ -15,6 +15,7 @@ import mermaid from "mermaid";
 import {
   cloneFlowchart,
   nextNodeId,
+  NODE_SHAPE_SEMANTICS,
   parseFlowchart,
   serializeFlowchart,
   type FlowDirection,
@@ -175,6 +176,13 @@ let renderSequence = 0;
 let renderTimer: ReturnType<typeof setTimeout> | undefined;
 let currentFlowchart: FlowchartModel | null = null;
 let selectedNodeId: string | null = null;
+let annotationFrame: number | undefined;
+
+const annotationResizeObserver = new ResizeObserver(() => {
+  scheduleAnnotationLayout();
+});
+annotationResizeObserver.observe(preview);
+preview.addEventListener("scroll", scheduleAnnotationLayout, { passive: true });
 
 const initialDocument = localStorage.getItem(STORAGE_KEY) ?? "";
 const savedSplit = Number(localStorage.getItem(SPLIT_STORAGE_KEY));
@@ -289,18 +297,35 @@ function configureVisualEditing(source: string): void {
     setStatus("ready", result.reason ?? "表示できました");
     return;
   }
+  const model = currentFlowchart;
 
-  directionSelect.value = currentFlowchart.direction;
+  const annotationLayer = document.createElement("div");
+  annotationLayer.className = "node-annotation-layer";
+  annotationLayer.setAttribute("aria-hidden", "true");
+  preview.append(annotationLayer);
+
+  directionSelect.value = model.direction;
   const nodeElements = preview.querySelectorAll<SVGGElement>("g.node");
   nodeElements.forEach((nodeElement) => {
-    const nodeId = getRenderedNodeId(nodeElement, currentFlowchart!);
+    const nodeId = getRenderedNodeId(nodeElement, model);
     if (!nodeId) return;
 
     nodeElement.dataset.editorNodeId = nodeId;
     nodeElement.classList.add("visual-editable");
     nodeElement.tabIndex = 0;
     nodeElement.setAttribute("role", "button");
-    nodeElement.setAttribute("aria-label", `${nodeId}を編集`);
+    const node = model.nodes.find((candidate) => candidate.id === nodeId);
+    if (!node) return;
+    const semantics = NODE_SHAPE_SEMANTICS[node.shape];
+    nodeElement.setAttribute(
+      "aria-label",
+      `${node.label}を編集。${semantics.accessibleDescription}`,
+    );
+    const annotation = document.createElement("span");
+    annotation.className = "node-shape-annotation";
+    annotation.dataset.editorNodeId = nodeId;
+    annotation.textContent = semantics.shortLabel;
+    annotationLayer.append(annotation);
     nodeElement.addEventListener("click", (event) => {
       event.stopPropagation();
       selectNode(nodeId);
@@ -317,6 +342,7 @@ function configureVisualEditing(source: string): void {
       }
     });
   });
+  scheduleAnnotationLayout();
 
   if (selectedNodeId && currentFlowchart.nodes.some((node) => node.id === selectedNodeId)) {
     selectNode(selectedNodeId);
@@ -325,6 +351,32 @@ function configureVisualEditing(source: string): void {
     nodeToolbar.classList.add("hidden");
   }
   setStatus("ready", "図をクリックして編集");
+}
+
+function scheduleAnnotationLayout(): void {
+  if (annotationFrame !== undefined) cancelAnimationFrame(annotationFrame);
+  annotationFrame = requestAnimationFrame(() => {
+    annotationFrame = undefined;
+    layoutNodeAnnotations();
+  });
+}
+
+function layoutNodeAnnotations(): void {
+  const layer = preview.querySelector<HTMLElement>(".node-annotation-layer");
+  if (!layer) return;
+
+  const previewBounds = preview.getBoundingClientRect();
+  layer.querySelectorAll<HTMLElement>(".node-shape-annotation").forEach((annotation) => {
+    const nodeId = annotation.dataset.editorNodeId;
+    const nodeElement = [...preview.querySelectorAll<SVGGElement>("g.node.visual-editable")].find(
+      (element) => element.dataset.editorNodeId === nodeId,
+    );
+    if (!nodeElement) return;
+
+    const nodeBounds = nodeElement.getBoundingClientRect();
+    annotation.style.left = `${nodeBounds.right - previewBounds.left + preview.scrollLeft}px`;
+    annotation.style.top = `${nodeBounds.bottom - previewBounds.top + preview.scrollTop}px`;
+  });
 }
 
 function selectNode(nodeId: string): void {
