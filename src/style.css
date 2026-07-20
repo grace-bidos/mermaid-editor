@@ -326,17 +326,26 @@ select {
 }
 
 .edge-endpoint-handle {
-  fill: rgb(255 255 255 / 92%);
+  /*
+   * Arrowheadの上でも操作点として読めるよう、透明度ではなくsolidな面と
+   * haloでEdgeから分離します。外側のshadowは背景色を問わず輪郭を保ちます。
+   */
+  fill: #fff;
   stroke: #007aff;
-  stroke-width: 2;
+  stroke-width: 2.5;
   cursor: grab;
-  opacity: 0.72;
+  filter:
+    drop-shadow(0 0 1.5px rgb(255 255 255 / 100%))
+    drop-shadow(0 2px 3px rgb(0 69 145 / 28%));
+  opacity: 0.96;
+  paint-order: stroke fill;
   pointer-events: auto;
   touch-action: none;
   transition:
     opacity 120ms ease,
     r 120ms ease,
-    fill 120ms ease;
+    fill 120ms ease,
+    filter 120ms ease;
 }
 
 .edge-endpoint-handle:hover,
@@ -350,6 +359,9 @@ select {
 
 .edge-endpoint-handle.is-dragging {
   cursor: grabbing;
+  filter:
+    drop-shadow(0 0 2px rgb(255 255 255 / 100%))
+    drop-shadow(0 3px 5px rgb(0 69 145 / 35%));
 }
 
 .preview .visual-editable.is-edge-losing > :first-child {
@@ -667,6 +679,19 @@ select {
   .cm-node-source-correspondence {
     background: rgb(191 90 242 / 18%);
     box-shadow: inset 0 -2px 0 rgb(191 90 242 / 56%);
+  }
+
+  .edge-endpoint-handle {
+    fill: #2c2c2e;
+    stroke: #0a84ff;
+    filter:
+      drop-shadow(0 0 1.5px rgb(28 28 30 / 100%))
+      drop-shadow(0 2px 4px rgb(0 0 0 / 48%));
+  }
+
+  .edge-endpoint-handle:hover,
+  .edge-endpoint-handle.is-dragging {
+    fill: #0a84ff;
   }
 
   .node-shape-tooltip {
