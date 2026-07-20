@@ -325,19 +325,27 @@ select {
   pointer-events: none;
 }
 
+.preview .flowchart-link {
+  stroke: #3a3a3c !important;
+  stroke-width: 1.8px !important;
+}
+
+.preview .arrowMarkerPath {
+  fill: #1d1d1f !important;
+  stroke: #1d1d1f !important;
+}
+
 .edge-endpoint-handle {
   /*
-   * Arrowheadの上でも操作点として読めるよう、透明度ではなくsolidな面と
-   * haloでEdgeから分離します。外側のshadowは背景色を問わず輪郭を保ちます。
+   * HandleよりArrowの方向を優先します。薄いsurfaceを通してArrowheadを
+   * 見せつつ、Blue outlineでDrag可能な範囲だけを示します。
    */
-  fill: #fff;
-  stroke: #007aff;
-  stroke-width: 2.5;
+  fill: rgb(255 255 255 / 28%);
+  stroke: rgb(0 122 255 / 58%);
+  stroke-width: 1.5;
   cursor: grab;
-  filter:
-    drop-shadow(0 0 1.5px rgb(255 255 255 / 100%))
-    drop-shadow(0 2px 3px rgb(0 69 145 / 28%));
-  opacity: 0.96;
+  filter: none;
+  opacity: 0.82;
   paint-order: stroke fill;
   pointer-events: auto;
   touch-action: none;
@@ -359,9 +367,7 @@ select {
 
 .edge-endpoint-handle.is-dragging {
   cursor: grabbing;
-  filter:
-    drop-shadow(0 0 2px rgb(255 255 255 / 100%))
-    drop-shadow(0 3px 5px rgb(0 69 145 / 35%));
+  filter: drop-shadow(0 2px 4px rgb(0 69 145 / 32%));
 }
 
 .preview .visual-editable.is-edge-losing > :first-child {
@@ -682,16 +688,23 @@ select {
   }
 
   .edge-endpoint-handle {
-    fill: #2c2c2e;
-    stroke: #0a84ff;
-    filter:
-      drop-shadow(0 0 1.5px rgb(28 28 30 / 100%))
-      drop-shadow(0 2px 4px rgb(0 0 0 / 48%));
+    fill: rgb(44 44 46 / 24%);
+    stroke: rgb(10 132 255 / 64%);
+    filter: none;
   }
 
   .edge-endpoint-handle:hover,
   .edge-endpoint-handle.is-dragging {
     fill: #0a84ff;
+  }
+
+  .preview .flowchart-link {
+    stroke: #d1d1d6 !important;
+  }
+
+  .preview .arrowMarkerPath {
+    fill: #f5f5f7 !important;
+    stroke: #f5f5f7 !important;
   }
 
   .node-shape-tooltip {
