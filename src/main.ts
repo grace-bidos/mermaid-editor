@@ -12,30 +12,19 @@ import {
   Undo2,
   createElement,
 } from "lucide";
-import mermaid from "mermaid";
 import {
-  cloneFlowchart,
-  getNodeSourceRanges,
-  nextNodeId,
-  NODE_SHAPE_SEMANTICS,
-  parseFlowchart,
-  serializeFlowchart,
-  type FlowDirection,
-  type FlowchartModel,
-  type NodeShape,
-  type NodeSourceRangeMap,
   type SourceRange,
 } from "./flowchart";
+import { createNodeInteraction } from "./node-interaction";
+import { createEditorPersistence } from "./persistence";
+import { createPreviewController, type PreviewStatus } from "./preview";
+import {
+  createSplitPane,
+  DEFAULT_SPLIT_PERCENT,
+  MAX_SPLIT_PERCENT,
+  MIN_SPLIT_PERCENT,
+} from "./split-pane";
 import "./style.css";
-
-const STORAGE_KEY = "mermaid-editor:document:v2";
-const SPLIT_STORAGE_KEY = "mermaid-editor:split";
-const RENDER_DELAY_MS = 250;
-const DEFAULT_SPLIT_PERCENT = 32;
-const MIN_SPLIT_PERCENT = 18;
-const MAX_SPLIT_PERCENT = 68;
-
-type StatusState = "ready" | "rendering" | "error";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -160,6 +149,7 @@ const addNodeButton = requireElement<HTMLButtonElement>("#add-node-button");
 const deleteNodeButton = requireElement<HTMLButtonElement>("#delete-node-button");
 const directionSelect = requireElement<HTMLSelectElement>("#direction-select");
 const shapeSelect = requireElement<HTMLSelectElement>("#shape-select");
+const persistence = createEditorPersistence(localStorage);
 
 setButtonIcon(copyButton, Copy);
 setButtonIcon(downloadButton, Download);
@@ -167,31 +157,6 @@ setButtonIcon(undoButton, Undo2, 17);
 setButtonIcon(redoButton, Redo2, 17);
 setButtonIcon(addNodeButton, Plus, 17);
 setButtonIcon(deleteNodeButton, Trash2, 17);
-
-mermaid.initialize({
-  startOnLoad: false,
-  securityLevel: "strict",
-  suppressErrorRendering: true,
-  theme: window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "neutral",
-});
-
-let latestSvg = "";
-let renderSequence = 0;
-let renderTimer: ReturnType<typeof setTimeout> | undefined;
-let currentFlowchart: FlowchartModel | null = null;
-let selectedNodeId: string | null = null;
-let pointedNodeId: string | null = null;
-let focusedNodeId: string | null = null;
-let annotationPointedNodeId: string | null = null;
-let tooltipPointedNodeId: string | null = null;
-let annotationFocusedNodeId: string | null = null;
-let pinnedTooltipNodeId: string | null = null;
-let dismissedTooltipNodeId: string | null = null;
-let annotationFrame: number | undefined;
-let tooltipLeaveTimer: ReturnType<typeof setTimeout> | undefined;
-let nodeSourceRanges: NodeSourceRangeMap | null = null;
-let sourceHoveredNodeId: string | null = null;
-let sourceCaretNodeId: string | null = null;
 
 const setSourceHighlights = StateEffect.define<readonly SourceRange[]>();
 const sourceHighlightField = StateField.define({
@@ -213,28 +178,47 @@ const sourceHighlightField = StateField.define({
   provide: (field) => EditorView.decorations.from(field),
 });
 
-const annotationResizeObserver = new ResizeObserver(() => {
-  scheduleAnnotationLayout();
+const initialDocument = persistence.loadDocument();
+createSplitPane({
+  workspace,
+  splitter,
+  initialPercent: persistence.loadSplitPercent(),
+  onPercentChange: persistence.saveSplitPercent,
 });
-annotationResizeObserver.observe(preview);
-preview.addEventListener("scroll", scheduleAnnotationLayout, { passive: true });
-document.addEventListener("pointerdown", (event) => {
-  if (!pinnedTooltipNodeId) return;
-  const target = event.target as Element | null;
-  if (target?.closest(`[data-editor-node-id="${CSS.escape(pinnedTooltipNodeId)}"]`)) return;
-  dismissTooltip(pinnedTooltipNodeId, true);
+let editor!: EditorView;
+const nodeInteraction = createNodeInteraction({
+  elements: {
+    preview,
+    visualControls,
+    nodeToolbar,
+    directionSelect,
+    shapeSelect,
+  },
+  editor: {
+    getCaretPosition: () => editor.state.selection.main.head,
+    replaceSource: (source) => {
+      editor.dispatch({
+        changes: { from: 0, to: editor.state.doc.length, insert: source },
+        selection: { anchor: 0 },
+      });
+    },
+    setSourceHighlights: (ranges) => {
+      editor.dispatch({ effects: setSourceHighlights.of(ranges) });
+    },
+  },
+  setStatus,
 });
-document.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape") return;
-  const openNodeId = getOpenTooltipNodeId();
-  if (openNodeId) dismissTooltip(openNodeId);
+const previewController = createPreviewController({
+  previewElement: preview,
+  errorElement: errorPanel,
+  downloadButton,
+  onStatusChange: setStatus,
+  onRendered: ({ source }) => nodeInteraction.configureRendered(source),
+  onEmpty: nodeInteraction.clearCorrespondence,
+  onError: nodeInteraction.clearCorrespondence,
 });
 
-const initialDocument = localStorage.getItem(STORAGE_KEY) ?? "";
-const savedSplit = Number(localStorage.getItem(SPLIT_STORAGE_KEY));
-setSplitPercent(Number.isFinite(savedSplit) && savedSplit > 0 ? savedSplit : DEFAULT_SPLIT_PERCENT);
-
-const editor = new EditorView({
+editor = new EditorView({
   doc: initialDocument,
   parent: editorHost,
   extensions: [
@@ -249,22 +233,21 @@ const editor = new EditorView({
     sourceHighlightField,
     EditorView.domEventHandlers({
       mousemove(event, view) {
-        updateSourceHover(view.posAtCoords({ x: event.clientX, y: event.clientY }));
+        nodeInteraction.updateSourceHover(view.posAtCoords({ x: event.clientX, y: event.clientY }));
       },
       mouseleave() {
-        updateSourceHover(null);
+        nodeInteraction.updateSourceHover(null);
       },
     }),
     EditorView.updateListener.of((update) => {
-      if (update.selectionSet && !update.docChanged) updateCaretCorrespondence(update.state.selection.main.head);
+      if (update.selectionSet && !update.docChanged) {
+        nodeInteraction.updateCaret(update.state.selection.main.head);
+      }
       if (!update.docChanged) return;
 
       const source = update.state.doc.toString();
-      nodeSourceRanges = null;
-      sourceHoveredNodeId = null;
-      sourceCaretNodeId = null;
-      queueMicrotask(() => updateCorrespondence());
-      localStorage.setItem(STORAGE_KEY, source);
+      nodeInteraction.handleSourceChange();
+      persistence.saveDocument(source);
       copyButton.disabled = !source.trim();
       scheduleRender(source);
     }),
@@ -279,555 +262,23 @@ copyButton.addEventListener("click", () => {
 downloadButton.addEventListener("click", downloadSvg);
 undoButton.addEventListener("click", () => undo(editor));
 redoButton.addEventListener("click", () => redo(editor));
-directionSelect.addEventListener("change", changeDirection);
-shapeSelect.addEventListener("change", changeSelectedShape);
-addNodeButton.addEventListener("click", addNodeAfterSelection);
-deleteNodeButton.addEventListener("click", deleteSelectedNode);
-splitter.addEventListener("pointerdown", startResize);
-splitter.addEventListener("keydown", resizeWithKeyboard);
-splitter.addEventListener("dblclick", () => setSplitPercent(DEFAULT_SPLIT_PERCENT));
-preview.addEventListener("click", clearNodeSelection);
+directionSelect.addEventListener("change", nodeInteraction.changeDirection);
+shapeSelect.addEventListener("change", nodeInteraction.changeSelectedShape);
+addNodeButton.addEventListener("click", nodeInteraction.addNodeAfterSelection);
+deleteNodeButton.addEventListener("click", nodeInteraction.deleteSelectedNode);
+preview.addEventListener("click", nodeInteraction.clearNodeSelection);
 
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-  mermaid.initialize({
-    startOnLoad: false,
-    securityLevel: "strict",
-    suppressErrorRendering: true,
-    theme: window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "neutral",
-  });
+  previewController.updateTheme();
   scheduleRender(editor.state.doc.toString(), 0);
 });
 
 scheduleRender(initialDocument, 0);
 
-function scheduleRender(source: string, delay = RENDER_DELAY_MS): void {
-  if (renderTimer !== undefined) clearTimeout(renderTimer);
-  ++renderSequence;
-
-  if (!source.trim()) {
-    latestSvg = "";
-    downloadButton.disabled = true;
-    clearCorrespondence();
-    showEmptyPreview();
-    errorPanel.replaceChildren();
-    errorPanel.classList.add("hidden");
-    setStatus("ready", "コードを待っています");
-    return;
-  }
-
-  setStatus("rendering", "描画中…");
-  renderTimer = setTimeout(() => {
-    void renderDiagram(source);
-  }, delay);
+function scheduleRender(source: string, delay?: number): void {
+  previewController.schedule(source, delay);
 }
 
-async function renderDiagram(source: string): Promise<void> {
-  const sequence = ++renderSequence;
-
-  try {
-    await mermaid.parse(source, { suppressErrors: false });
-    const { svg, bindFunctions } = await mermaid.render(`diagram-${sequence}`, source);
-
-    if (sequence !== renderSequence) return;
-
-    latestSvg = svg;
-    downloadButton.disabled = false;
-    preview.innerHTML = svg;
-    bindFunctions?.(preview);
-    configureVisualEditing(source);
-    errorPanel.replaceChildren();
-    errorPanel.classList.add("hidden");
-    setStatus("ready", "保存済み");
-  } catch (error: unknown) {
-    if (sequence !== renderSequence) return;
-
-    clearCorrespondence();
-    errorPanel.textContent = readableError(error);
-    errorPanel.classList.remove("hidden");
-    setStatus("error", "構文を確認してください");
-  }
-}
-
-function configureVisualEditing(source: string): void {
-  const result = parseFlowchart(source);
-  nodeSourceRanges = getNodeSourceRanges(source);
-  sourceHoveredNodeId = null;
-  sourceCaretNodeId = null;
-  currentFlowchart = result.model;
-  visualControls.classList.toggle("hidden", !currentFlowchart);
-
-  if (!currentFlowchart) {
-    sourceHoveredNodeId = null;
-    sourceCaretNodeId = null;
-    updateCorrespondence();
-    selectedNodeId = null;
-    nodeToolbar.classList.add("hidden");
-    setStatus("ready", result.reason ?? "表示できました");
-    return;
-  }
-  const model = currentFlowchart;
-  pointedNodeId = null;
-  focusedNodeId = null;
-  annotationPointedNodeId = null;
-  tooltipPointedNodeId = null;
-  annotationFocusedNodeId = null;
-  pinnedTooltipNodeId = null;
-  dismissedTooltipNodeId = null;
-  cancelTooltipLeave();
-
-  const annotationLayer = document.createElement("div");
-  annotationLayer.className = "node-annotation-layer";
-  preview.append(annotationLayer);
-
-  directionSelect.value = model.direction;
-  const nodeElements = preview.querySelectorAll<SVGGElement>("g.node");
-  nodeElements.forEach((nodeElement) => {
-    const nodeId = getRenderedNodeId(nodeElement, model);
-    if (!nodeId) return;
-
-    nodeElement.dataset.editorNodeId = nodeId;
-    nodeElement.classList.add("visual-editable");
-    nodeElement.tabIndex = 0;
-    nodeElement.setAttribute("role", "button");
-    const node = model.nodes.find((candidate) => candidate.id === nodeId);
-    if (!node) return;
-    const semantics = NODE_SHAPE_SEMANTICS[node.shape];
-    nodeElement.setAttribute(
-      "aria-label",
-      `${node.label}を編集。${semantics.accessibleDescription}`,
-    );
-    const annotation = document.createElement("button");
-    annotation.type = "button";
-    annotation.className = "node-shape-annotation";
-    annotation.dataset.editorNodeId = nodeId;
-    annotation.textContent = semantics.shortLabel;
-    annotation.setAttribute("aria-label", `${semantics.shortLabel}の意味を確認`);
-    annotation.setAttribute("aria-expanded", "false");
-    annotationLayer.append(annotation);
-    const tooltip = document.createElement("div");
-    tooltip.id = `node-shape-tooltip-${sequenceSafeId(nodeId)}`;
-    tooltip.className = "node-shape-tooltip";
-    tooltip.dataset.editorNodeId = nodeId;
-    tooltip.setAttribute("role", "tooltip");
-    tooltip.hidden = true;
-    const tooltipTitle = document.createElement("strong");
-    tooltipTitle.textContent = semantics.shortLabel;
-    const tooltipDescription = document.createElement("span");
-    tooltipDescription.textContent = semantics.detailDescription;
-    tooltip.append(tooltipTitle, tooltipDescription);
-    annotation.setAttribute("aria-describedby", tooltip.id);
-    annotationLayer.append(tooltip);
-    let annotationPointerType = "";
-    annotation.addEventListener("pointerdown", (event) => {
-      annotationPointerType = event.pointerType;
-      event.stopPropagation();
-    });
-    annotation.addEventListener("pointerenter", (event) => {
-      if (event.pointerType !== "mouse" && event.pointerType !== "pen") return;
-      cancelTooltipLeave();
-      if (dismissedTooltipNodeId === nodeId) dismissedTooltipNodeId = null;
-      tooltipPointedNodeId = null;
-      annotationPointedNodeId = nodeId;
-      updateNodeEmphasis();
-    });
-    annotation.addEventListener("pointerleave", () => {
-      scheduleTooltipLeave(nodeId, "annotation");
-    });
-    annotation.addEventListener("focus", () => {
-      if (dismissedTooltipNodeId === nodeId) dismissedTooltipNodeId = null;
-      annotationFocusedNodeId = nodeId;
-      updateNodeEmphasis();
-    });
-    annotation.addEventListener("blur", () => {
-      if (annotationFocusedNodeId === nodeId) annotationFocusedNodeId = null;
-      updateNodeEmphasis();
-    });
-    annotation.addEventListener("click", (event) => {
-      event.stopPropagation();
-      const isKeyboardActivation = annotationPointerType === "";
-      const shouldToggle = annotationPointerType === "touch" || isKeyboardActivation;
-      annotationPointerType = "";
-      if (!shouldToggle) return;
-      if (pinnedTooltipNodeId === nodeId) {
-        dismissTooltip(nodeId, true);
-        return;
-      }
-      dismissedTooltipNodeId = null;
-      pinnedTooltipNodeId = nodeId;
-      updateNodeEmphasis();
-    });
-    annotation.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        dismissTooltip(nodeId);
-      }
-    });
-    tooltip.addEventListener("pointerenter", (event) => {
-      if (event.pointerType !== "mouse" && event.pointerType !== "pen") return;
-      cancelTooltipLeave();
-      annotationPointedNodeId = null;
-      tooltipPointedNodeId = nodeId;
-      updateNodeEmphasis();
-    });
-    tooltip.addEventListener("pointerleave", () => {
-      scheduleTooltipLeave(nodeId, "tooltip");
-    });
-    nodeElement.addEventListener("pointerenter", (event) => {
-      if ((event.pointerType !== "mouse" && event.pointerType !== "pen") || event.buttons !== 0) {
-        return;
-      }
-      pointedNodeId = nodeId;
-      updateNodeEmphasis();
-      updateCorrespondence();
-    });
-    nodeElement.addEventListener("pointerleave", () => {
-      if (pointedNodeId === nodeId) pointedNodeId = null;
-      updateNodeEmphasis();
-      updateCorrespondence();
-    });
-    nodeElement.addEventListener("pointercancel", () => {
-      if (pointedNodeId === nodeId) pointedNodeId = null;
-      updateNodeEmphasis();
-      updateCorrespondence();
-    });
-    nodeElement.addEventListener("focus", () => {
-      focusedNodeId = nodeId;
-      updateNodeEmphasis();
-      updateCorrespondence();
-    });
-    nodeElement.addEventListener("blur", () => {
-      if (focusedNodeId === nodeId) focusedNodeId = null;
-      updateNodeEmphasis();
-      updateCorrespondence();
-    });
-    nodeElement.addEventListener("click", (event) => {
-      event.stopPropagation();
-      selectNode(nodeId);
-    });
-    nodeElement.addEventListener("dblclick", (event) => {
-      event.stopPropagation();
-      openLabelEditor(nodeId, nodeElement);
-    });
-    nodeElement.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") openLabelEditor(nodeId, nodeElement);
-      if (event.key === "Delete" || event.key === "Backspace") {
-        selectNode(nodeId);
-        deleteSelectedNode();
-      }
-    });
-  });
-  updateCaretCorrespondence(editor.state.selection.main.head);
-  scheduleAnnotationLayout();
-
-  if (selectedNodeId && currentFlowchart.nodes.some((node) => node.id === selectedNodeId)) {
-    selectNode(selectedNodeId);
-  } else {
-    selectedNodeId = null;
-    nodeToolbar.classList.add("hidden");
-  }
-  setStatus("ready", "図をクリックして編集");
-}
-
-function updateNodeEmphasis(): void {
-  const openTooltipNodeId = getOpenTooltipNodeId();
-  const emphasizedNodeId =
-    pinnedTooltipNodeId ??
-    openTooltipNodeId ??
-    annotationPointedNodeId ??
-    tooltipPointedNodeId ??
-    pointedNodeId ??
-    focusedNodeId;
-
-  preview.querySelectorAll<HTMLElement>("[data-editor-node-id]").forEach((element) => {
-    element.classList.toggle(
-      "is-emphasized",
-      emphasizedNodeId !== null && element.dataset.editorNodeId === emphasizedNodeId,
-    );
-  });
-  preview.querySelectorAll<HTMLButtonElement>(".node-shape-annotation").forEach((annotation) => {
-    const nodeId = annotation.dataset.editorNodeId;
-    const isOpen = nodeId === openTooltipNodeId;
-    const tooltip = nodeId
-      ? preview.querySelector<HTMLElement>(`#node-shape-tooltip-${sequenceSafeId(nodeId)}`)
-      : null;
-    annotation.setAttribute("aria-expanded", String(isOpen));
-    if (tooltip) tooltip.hidden = !isOpen;
-  });
-  scheduleAnnotationLayout();
-}
-
-function updateSourceHover(position: number | null): void {
-  const nextNodeId = position === null ? null : findNodeIdAtPosition(position);
-  if (sourceHoveredNodeId === nextNodeId) return;
-  sourceHoveredNodeId = nextNodeId;
-  updateCorrespondence();
-}
-
-function updateCaretCorrespondence(position: number): void {
-  const nextNodeId = findNodeIdAtPosition(position);
-  if (sourceCaretNodeId === nextNodeId) {
-    updateCorrespondence();
-    return;
-  }
-  sourceCaretNodeId = nextNodeId;
-  updateCorrespondence();
-}
-
-function findNodeIdAtPosition(position: number): string | null {
-  if (!nodeSourceRanges) return null;
-
-  for (const [nodeId, occurrences] of Object.entries(nodeSourceRanges)) {
-    if (occurrences?.some(({ from, to }) => position >= from && position < to)) return nodeId;
-  }
-  return null;
-}
-
-function updateCorrespondence(): void {
-  const previewNodeId = pointedNodeId ?? focusedNodeId;
-  const sourceNodeId = sourceHoveredNodeId ?? sourceCaretNodeId;
-  const activeNodeId = previewNodeId ?? sourceNodeId;
-  const ranges = activeNodeId ? (nodeSourceRanges?.[activeNodeId] ?? []) : [];
-
-  editor.dispatch({
-    effects: setSourceHighlights.of(ranges),
-  });
-
-  preview.querySelectorAll<SVGGElement>("g.node.visual-editable").forEach((nodeElement) => {
-    nodeElement.classList.toggle(
-      "is-source-corresponding",
-      previewNodeId === null &&
-        sourceNodeId !== null &&
-        nodeElement.dataset.editorNodeId === sourceNodeId,
-    );
-  });
-}
-
-function clearCorrespondence(): void {
-  nodeSourceRanges = null;
-  sourceHoveredNodeId = null;
-  sourceCaretNodeId = null;
-  pointedNodeId = null;
-  focusedNodeId = null;
-  updateCorrespondence();
-}
-
-function getOpenTooltipNodeId(): string | null {
-  const candidate =
-    pinnedTooltipNodeId ??
-    annotationPointedNodeId ??
-    tooltipPointedNodeId ??
-    annotationFocusedNodeId;
-  return candidate === dismissedTooltipNodeId ? null : candidate;
-}
-
-function dismissTooltip(nodeId: string, blurTrigger = false): void {
-  pinnedTooltipNodeId = null;
-  dismissedTooltipNodeId = nodeId;
-  annotationFocusedNodeId = null;
-  const trigger = preview.querySelector<HTMLButtonElement>(
-    `.node-shape-annotation[data-editor-node-id="${CSS.escape(nodeId)}"]`,
-  );
-  if (blurTrigger && trigger && document.activeElement === trigger) trigger.blur();
-  updateNodeEmphasis();
-}
-
-function cancelTooltipLeave(): void {
-  if (tooltipLeaveTimer === undefined) return;
-  clearTimeout(tooltipLeaveTimer);
-  tooltipLeaveTimer = undefined;
-}
-
-function scheduleTooltipLeave(nodeId: string, source: "annotation" | "tooltip"): void {
-  cancelTooltipLeave();
-  tooltipLeaveTimer = setTimeout(() => {
-    tooltipLeaveTimer = undefined;
-    if (source === "annotation" && annotationPointedNodeId === nodeId) {
-      annotationPointedNodeId = null;
-    }
-    if (source === "tooltip" && tooltipPointedNodeId === nodeId) {
-      tooltipPointedNodeId = null;
-    }
-    if (
-      dismissedTooltipNodeId === nodeId &&
-      annotationPointedNodeId !== nodeId &&
-      tooltipPointedNodeId !== nodeId
-    ) {
-      dismissedTooltipNodeId = null;
-    }
-    updateNodeEmphasis();
-  }, 140);
-}
-
-function scheduleAnnotationLayout(): void {
-  if (annotationFrame !== undefined) cancelAnimationFrame(annotationFrame);
-  annotationFrame = requestAnimationFrame(() => {
-    annotationFrame = undefined;
-    layoutNodeAnnotations();
-  });
-}
-
-function layoutNodeAnnotations(): void {
-  const layer = preview.querySelector<HTMLElement>(".node-annotation-layer");
-  if (!layer) return;
-
-  const previewBounds = preview.getBoundingClientRect();
-  layer.querySelectorAll<HTMLElement>(".node-shape-annotation").forEach((annotation) => {
-    const nodeId = annotation.dataset.editorNodeId;
-    const nodeElement = [...preview.querySelectorAll<SVGGElement>("g.node.visual-editable")].find(
-      (element) => element.dataset.editorNodeId === nodeId,
-    );
-    if (!nodeElement) return;
-
-    const nodeBounds = nodeElement.getBoundingClientRect();
-    annotation.style.left = `${nodeBounds.right - previewBounds.left + preview.scrollLeft}px`;
-    annotation.style.top = `${nodeBounds.bottom - previewBounds.top + preview.scrollTop}px`;
-    const tooltip = nodeId
-      ? layer.querySelector<HTMLElement>(`#node-shape-tooltip-${sequenceSafeId(nodeId)}`)
-      : null;
-    if (!tooltip) return;
-    if (tooltip.hidden) return;
-    const tooltipBounds = tooltip.getBoundingClientRect();
-    const gap = 8;
-    const viewportPadding = 8;
-    const annotationBounds = annotation.getBoundingClientRect();
-    const minLeft = preview.scrollLeft + viewportPadding;
-    const maxLeft =
-      preview.scrollLeft + preview.clientWidth - tooltipBounds.width - viewportPadding;
-    const preferredLeft =
-      annotationBounds.right - previewBounds.left + preview.scrollLeft - tooltipBounds.width * 0.82;
-    const left = Math.min(Math.max(preferredLeft, minLeft), Math.max(minLeft, maxLeft));
-    const spaceAbove = annotationBounds.top - previewBounds.top;
-    const preferredTop =
-      spaceAbove >= tooltipBounds.height + gap
-        ? annotationBounds.top -
-          previewBounds.top +
-          preview.scrollTop -
-          tooltipBounds.height -
-          gap
-        : annotationBounds.bottom - previewBounds.top + preview.scrollTop + gap;
-    const minTop = preview.scrollTop + viewportPadding;
-    const maxTop =
-      preview.scrollTop + preview.clientHeight - tooltipBounds.height - viewportPadding;
-    const top = Math.min(Math.max(preferredTop, minTop), Math.max(minTop, maxTop));
-    tooltip.style.left = `${left}px`;
-    tooltip.style.top = `${top}px`;
-  });
-}
-
-function sequenceSafeId(value: string): string {
-  return value.replaceAll(/[^A-Za-z0-9_-]/g, "-");
-}
-
-function selectNode(nodeId: string): void {
-  selectedNodeId = nodeId;
-  preview.querySelectorAll(".node.is-selected").forEach((element) => element.classList.remove("is-selected"));
-  const selected = [...preview.querySelectorAll<SVGGElement>("g.node.visual-editable")].find(
-    (element) => element.dataset.editorNodeId === nodeId,
-  );
-  selected?.classList.add("is-selected");
-
-  const node = currentFlowchart?.nodes.find((candidate) => candidate.id === nodeId);
-  if (node) shapeSelect.value = node.shape;
-  nodeToolbar.classList.toggle("hidden", !node);
-}
-
-function clearNodeSelection(event: Event): void {
-  if ((event.target as Element | null)?.closest(".visual-editable, .node-toolbar")) return;
-  selectedNodeId = null;
-  nodeToolbar.classList.add("hidden");
-  preview.querySelectorAll(".node.is-selected").forEach((element) => element.classList.remove("is-selected"));
-}
-
-function openLabelEditor(nodeId: string, nodeElement: SVGGElement): void {
-  const node = currentFlowchart?.nodes.find((candidate) => candidate.id === nodeId);
-  if (!node) return;
-
-  document.querySelector(".node-label-editor")?.remove();
-  const bounds = nodeElement.getBoundingClientRect();
-  const input = document.createElement("input");
-  input.className = "node-label-editor";
-  input.value = node.label;
-  input.setAttribute("aria-label", "ノードの名前");
-  input.style.left = `${bounds.left + bounds.width / 2}px`;
-  input.style.top = `${bounds.top + bounds.height / 2}px`;
-  document.body.append(input);
-  input.focus();
-  input.select();
-
-  let finished = false;
-  const finish = (save: boolean): void => {
-    if (finished) return;
-    finished = true;
-    const nextLabel = input.value.trim();
-    input.remove();
-    if (save && nextLabel && nextLabel !== node.label) {
-      updateFlowchart((model) => {
-        const target = model.nodes.find((candidate) => candidate.id === nodeId);
-        if (target) target.label = nextLabel;
-      });
-    }
-  };
-
-  input.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") finish(true);
-    if (event.key === "Escape") finish(false);
-  });
-  input.addEventListener("blur", () => finish(true));
-}
-
-function changeDirection(): void {
-  updateFlowchart((model) => {
-    model.direction = directionSelect.value as FlowDirection;
-  });
-}
-
-function changeSelectedShape(): void {
-  if (!selectedNodeId) return;
-  updateFlowchart((model) => {
-    const node = model.nodes.find((candidate) => candidate.id === selectedNodeId);
-    if (node) node.shape = shapeSelect.value as NodeShape;
-  });
-}
-
-function addNodeAfterSelection(): void {
-  if (!selectedNodeId || !currentFlowchart) return;
-  const newId = nextNodeId(currentFlowchart);
-  updateFlowchart((model) => {
-    const selectedIndex = model.nodes.findIndex((node) => node.id === selectedNodeId);
-    model.nodes.splice(selectedIndex + 1, 0, {
-      id: newId,
-      label: "新しいステップ",
-      shape: "rectangle",
-    });
-    model.edges.push({ from: selectedNodeId!, to: newId, label: "", connector: "-->" });
-  });
-  selectedNodeId = newId;
-}
-
-function deleteSelectedNode(): void {
-  if (!selectedNodeId || !currentFlowchart) return;
-  if (currentFlowchart.nodes.length <= 1) {
-    setStatus("error", "最後のノードは削除できません");
-    return;
-  }
-  const nodeId = selectedNodeId;
-  selectedNodeId = null;
-  updateFlowchart((model) => {
-    model.nodes = model.nodes.filter((node) => node.id !== nodeId);
-    model.edges = model.edges.filter((edge) => edge.from !== nodeId && edge.to !== nodeId);
-  });
-}
-
-function updateFlowchart(change: (model: FlowchartModel) => void): void {
-  if (!currentFlowchart) return;
-  const next = cloneFlowchart(currentFlowchart);
-  change(next);
-  const source = serializeFlowchart(next);
-  editor.dispatch({
-    changes: { from: 0, to: editor.state.doc.length, insert: source },
-    selection: { anchor: 0 },
-  });
-}
 
 async function copySource(): Promise<void> {
   try {
@@ -847,6 +298,7 @@ async function copySource(): Promise<void> {
 }
 
 function downloadSvg(): void {
+  const latestSvg = previewController.getLatestSvg();
   if (!latestSvg) return;
 
   const blob = new Blob([latestSvg], { type: "image/svg+xml;charset=utf-8" });
@@ -858,72 +310,9 @@ function downloadSvg(): void {
   URL.revokeObjectURL(url);
 }
 
-function startResize(event: PointerEvent): void {
-  event.preventDefault();
-  splitter.setPointerCapture(event.pointerId);
-  document.body.classList.add("is-resizing");
-
-  const updateFromPointer = (moveEvent: PointerEvent): void => {
-    const bounds = workspace.getBoundingClientRect();
-    const percent = ((moveEvent.clientY - bounds.top) / bounds.height) * 100;
-    setSplitPercent(percent);
-  };
-
-  const stopResize = (): void => {
-    document.body.classList.remove("is-resizing");
-    splitter.removeEventListener("pointermove", updateFromPointer);
-    splitter.removeEventListener("pointerup", stopResize);
-    splitter.removeEventListener("pointercancel", stopResize);
-  };
-
-  splitter.addEventListener("pointermove", updateFromPointer);
-  splitter.addEventListener("pointerup", stopResize);
-  splitter.addEventListener("pointercancel", stopResize);
-}
-
-function resizeWithKeyboard(event: KeyboardEvent): void {
-  const current = Number(splitter.getAttribute("aria-valuenow")) || DEFAULT_SPLIT_PERCENT;
-  const step = event.shiftKey ? 10 : 2;
-  let next = current;
-
-  if (event.key === "ArrowUp") next -= step;
-  else if (event.key === "ArrowDown") next += step;
-  else if (event.key === "Home") next = MIN_SPLIT_PERCENT;
-  else if (event.key === "End") next = MAX_SPLIT_PERCENT;
-  else return;
-
-  event.preventDefault();
-  setSplitPercent(next);
-}
-
-function setSplitPercent(percent: number): void {
-  const clamped = Math.min(MAX_SPLIT_PERCENT, Math.max(MIN_SPLIT_PERCENT, percent));
-  workspace.style.setProperty("--editor-height", `${clamped}%`);
-  splitter.setAttribute("aria-valuenow", String(Math.round(clamped)));
-  localStorage.setItem(SPLIT_STORAGE_KEY, String(clamped));
-}
-
-function showEmptyPreview(): void {
-  preview.innerHTML = `
-    <div class="empty-preview">
-      <div class="empty-preview-icon" aria-hidden="true">&lt;/&gt;</div>
-      <p>コードを貼ると、ここに図が表示されます</p>
-      <span>ChatGPTなどの回答にある <strong>mermaid</strong> のコード部分をコピーしてください</span>
-    </div>
-  `;
-}
-
-function setStatus(state: StatusState, message: string): void {
+function setStatus(state: PreviewStatus, message: string): void {
   statusDot.dataset.state = state;
   statusText.textContent = message;
-}
-
-function getRenderedNodeId(element: SVGGElement, model: FlowchartModel): string | null {
-  const explicitId = element.dataset.id;
-  if (explicitId && model.nodes.some((node) => node.id === explicitId)) return explicitId;
-
-  const matchingNode = model.nodes.find((node) => element.id.includes(`-flowchart-${node.id}-`));
-  return matchingNode?.id ?? null;
 }
 
 function setButtonIcon(
@@ -939,14 +328,6 @@ function setButtonIcon(
       "aria-hidden": "true",
     }),
   );
-}
-
-function readableError(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message.split("\n").slice(0, 3).join(" ");
-  }
-
-  return "Mermaid構文を解析できませんでした。";
 }
 
 function requireElement<T extends Element>(selector: string): T {
