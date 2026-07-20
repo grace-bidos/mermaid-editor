@@ -220,6 +220,109 @@ select {
   outline-offset: 1px;
 }
 
+.history-preview-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.history-label-change {
+  position: absolute;
+  display: flex;
+  max-width: min(20rem, calc(100% - 2rem));
+  align-items: center;
+  gap: 0.38rem;
+  padding: 0.36rem 0.55rem;
+  transform: translate(-50%, calc(-100% - 0.55rem));
+  border: 1px solid rgb(0 122 255 / 22%);
+  border-radius: 0.6rem;
+  background: rgb(255 255 255 / 90%);
+  color: #3a3a3c;
+  box-shadow: 0 5px 18px rgb(0 0 0 / 12%);
+  font-size: 0.6875rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  backdrop-filter: blur(16px) saturate(180%);
+  animation: history-preview-arrive 160ms cubic-bezier(0.2, 0.75, 0.25, 1);
+}
+
+.history-label-change del {
+  color: #ff3b30;
+  text-decoration-thickness: 1.5px;
+}
+
+.history-label-change span {
+  color: #8e8e93;
+}
+
+.history-label-change strong {
+  overflow: hidden;
+  color: #007aff;
+  font-weight: 700;
+  text-overflow: ellipsis;
+}
+
+.preview .is-history-removed {
+  opacity: 0.46;
+  filter: saturate(0.55);
+  stroke: #ff3b30 !important;
+  stroke-dasharray: 5 3;
+}
+
+.preview g.node.is-history-removed > :first-child {
+  stroke: #ff3b30 !important;
+  stroke-width: 2px !important;
+}
+
+.preview g.node.is-history-removed text,
+.preview g.node.is-history-changed text {
+  fill: #ff3b30 !important;
+  text-decoration: line-through;
+  text-decoration-thickness: 1.5px;
+}
+
+.history-added-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 2rem;
+  animation: history-overlay-arrive 160ms cubic-bezier(0.2, 0.75, 0.25, 1);
+}
+
+.history-added-overlay svg {
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.history-added-overlay .is-history-added {
+  opacity: 0.72;
+  filter: drop-shadow(0 2px 5px rgb(52 199 89 / 24%));
+}
+
+.history-added-overlay g.node.is-history-added > :first-child,
+.history-added-overlay path.is-history-added {
+  stroke: #34c759 !important;
+  stroke-width: 2.5px !important;
+  stroke-dasharray: 5 3;
+}
+
+@keyframes history-preview-arrive {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-100% - 0.25rem)) scale(0.98);
+  }
+}
+
+@keyframes history-overlay-arrive {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+}
+
 .compact-control {
   min-height: 2rem;
   border: 0;
@@ -395,6 +498,11 @@ select {
   .preview .visual-editable.is-edge-losing > :first-child,
   .preview .visual-editable.is-edge-gaining > :first-child {
     transform: none;
+  }
+
+  .history-label-change,
+  .history-added-overlay {
+    animation: none;
   }
 }
 

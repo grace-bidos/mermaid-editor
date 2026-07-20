@@ -266,6 +266,12 @@ function showFullscreenToast(message: string): void {
         Wheelで移動し、ControlまたはCommandキーを押しながらWheelで拡大縮小できます。
       </span>
       <span id="viewport-status" class="sr-only" aria-live="polite">表示倍率 100%</span>
+      <div
+        id="history-preview-layer"
+        class="history-preview-layer"
+        aria-hidden="true"
+      />
+      <span id="history-preview-status" class="sr-only" aria-live="polite" />
 
       <div id="node-toolbar" class="node-toolbar hidden" aria-label="選択したノードの編集">
         <label class="sr-only" for="shape-select">ノードの形</label>

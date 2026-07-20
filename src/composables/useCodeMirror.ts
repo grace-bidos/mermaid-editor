@@ -1,4 +1,9 @@
-import { redo as redoCommand, undo as undoCommand } from "@codemirror/commands";
+import {
+  redo as redoCommand,
+  redoDepth,
+  undo as undoCommand,
+  undoDepth,
+} from "@codemirror/commands";
 import { StateEffect, StateField } from "@codemirror/state";
 import { Decoration, EditorView, placeholder } from "@codemirror/view";
 import { basicSetup } from "codemirror";
@@ -46,6 +51,13 @@ export interface CodeMirrorApi {
   undo(): boolean;
   /** CodeMirrorのhistoryを使って一操作やり直します。 */
   redo(): boolean;
+  /**
+   * Documentを変更せず、UndoまたはRedo後のsourceを読み取ります。
+   *
+   * CodeMirrorのhistoryを一度進め、同じtask内で必ず元へ戻すため、画面には
+   * 現在のdocumentだけが描画されます。Previewはこの値を予告表示に使います。
+   */
+  peekHistory(direction: "undo" | "redo"): string | null;
   /** Editorへkeyboard focusを移します。 */
   focus(): void;
 }
@@ -58,6 +70,7 @@ const EMPTY_API: CodeMirrorApi = {
   setSourceHighlights: () => undefined,
   undo: () => false,
   redo: () => false,
+  peekHistory: () => null,
   focus: () => undefined,
 };
 
@@ -106,6 +119,7 @@ export function useCodeMirror(
   callbacks: CodeMirrorCallbacks = {},
 ): CodeMirrorApi {
   let view: EditorView | null = null;
+  let isPeekingHistory = false;
 
   onMounted(() => {
     if (!host.value) {
@@ -140,6 +154,7 @@ export function useCodeMirror(
             callbacks.onCaretChange?.(update.state.selection.main.head);
           }
           if (!update.docChanged) return;
+          if (isPeekingHistory) return;
 
           const source = update.state.doc.toString();
           model.value = source;
@@ -185,6 +200,22 @@ export function useCodeMirror(
     },
     undo: () => (view ? undoCommand(view) : false),
     redo: () => (view ? redoCommand(view) : false),
+    peekHistory(direction) {
+      if (!view) return null;
+      const canMove = direction === "undo" ? undoDepth(view.state) > 0 : redoDepth(view.state) > 0;
+      if (!canMove) return null;
+
+      isPeekingHistory = true;
+      try {
+        const moved = direction === "undo" ? undoCommand(view) : redoCommand(view);
+        if (!moved) return null;
+        const previewSource = view.state.doc.toString();
+        const restored = direction === "undo" ? redoCommand(view) : undoCommand(view);
+        return restored ? previewSource : null;
+      } finally {
+        isPeekingHistory = false;
+      }
+    },
     focus: () => view?.focus(),
   };
 }

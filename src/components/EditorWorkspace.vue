@@ -27,6 +27,8 @@ defineExpose({
     codePane.value?.setSourceHighlights(ranges),
   undo: () => codePane.value?.undo() ?? false,
   redo: () => codePane.value?.redo() ?? false,
+  peekHistory: (direction: "undo" | "redo") =>
+    codePane.value?.peekHistory(direction) ?? null,
 });
 </script>
 
