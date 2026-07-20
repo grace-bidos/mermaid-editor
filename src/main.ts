@@ -178,13 +178,30 @@ let currentFlowchart: FlowchartModel | null = null;
 let selectedNodeId: string | null = null;
 let pointedNodeId: string | null = null;
 let focusedNodeId: string | null = null;
+let annotationPointedNodeId: string | null = null;
+let tooltipPointedNodeId: string | null = null;
+let annotationFocusedNodeId: string | null = null;
+let pinnedTooltipNodeId: string | null = null;
+let dismissedTooltipNodeId: string | null = null;
 let annotationFrame: number | undefined;
+let tooltipLeaveTimer: ReturnType<typeof setTimeout> | undefined;
 
 const annotationResizeObserver = new ResizeObserver(() => {
   scheduleAnnotationLayout();
 });
 annotationResizeObserver.observe(preview);
 preview.addEventListener("scroll", scheduleAnnotationLayout, { passive: true });
+document.addEventListener("pointerdown", (event) => {
+  if (!pinnedTooltipNodeId) return;
+  const target = event.target as Element | null;
+  if (target?.closest(`[data-editor-node-id="${CSS.escape(pinnedTooltipNodeId)}"]`)) return;
+  dismissTooltip(pinnedTooltipNodeId, true);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  const openNodeId = getOpenTooltipNodeId();
+  if (openNodeId) dismissTooltip(openNodeId);
+});
 
 const initialDocument = localStorage.getItem(STORAGE_KEY) ?? "";
 const savedSplit = Number(localStorage.getItem(SPLIT_STORAGE_KEY));
@@ -302,10 +319,15 @@ function configureVisualEditing(source: string): void {
   const model = currentFlowchart;
   pointedNodeId = null;
   focusedNodeId = null;
+  annotationPointedNodeId = null;
+  tooltipPointedNodeId = null;
+  annotationFocusedNodeId = null;
+  pinnedTooltipNodeId = null;
+  dismissedTooltipNodeId = null;
+  cancelTooltipLeave();
 
   const annotationLayer = document.createElement("div");
   annotationLayer.className = "node-annotation-layer";
-  annotationLayer.setAttribute("aria-hidden", "true");
   preview.append(annotationLayer);
 
   directionSelect.value = model.direction;
@@ -325,11 +347,82 @@ function configureVisualEditing(source: string): void {
       "aria-label",
       `${node.label}を編集。${semantics.accessibleDescription}`,
     );
-    const annotation = document.createElement("span");
+    const annotation = document.createElement("button");
+    annotation.type = "button";
     annotation.className = "node-shape-annotation";
     annotation.dataset.editorNodeId = nodeId;
     annotation.textContent = semantics.shortLabel;
+    annotation.setAttribute("aria-label", `${semantics.shortLabel}の意味を確認`);
+    annotation.setAttribute("aria-expanded", "false");
     annotationLayer.append(annotation);
+    const tooltip = document.createElement("div");
+    tooltip.id = `node-shape-tooltip-${sequenceSafeId(nodeId)}`;
+    tooltip.className = "node-shape-tooltip";
+    tooltip.dataset.editorNodeId = nodeId;
+    tooltip.setAttribute("role", "tooltip");
+    tooltip.hidden = true;
+    const tooltipTitle = document.createElement("strong");
+    tooltipTitle.textContent = semantics.shortLabel;
+    const tooltipDescription = document.createElement("span");
+    tooltipDescription.textContent = semantics.detailDescription;
+    tooltip.append(tooltipTitle, tooltipDescription);
+    annotation.setAttribute("aria-describedby", tooltip.id);
+    annotationLayer.append(tooltip);
+    let annotationPointerType = "";
+    annotation.addEventListener("pointerdown", (event) => {
+      annotationPointerType = event.pointerType;
+      event.stopPropagation();
+    });
+    annotation.addEventListener("pointerenter", (event) => {
+      if (event.pointerType !== "mouse" && event.pointerType !== "pen") return;
+      cancelTooltipLeave();
+      if (dismissedTooltipNodeId === nodeId) dismissedTooltipNodeId = null;
+      tooltipPointedNodeId = null;
+      annotationPointedNodeId = nodeId;
+      updateNodeEmphasis();
+    });
+    annotation.addEventListener("pointerleave", () => {
+      scheduleTooltipLeave(nodeId, "annotation");
+    });
+    annotation.addEventListener("focus", () => {
+      if (dismissedTooltipNodeId === nodeId) dismissedTooltipNodeId = null;
+      annotationFocusedNodeId = nodeId;
+      updateNodeEmphasis();
+    });
+    annotation.addEventListener("blur", () => {
+      if (annotationFocusedNodeId === nodeId) annotationFocusedNodeId = null;
+      updateNodeEmphasis();
+    });
+    annotation.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const isKeyboardActivation = annotationPointerType === "";
+      const shouldToggle = annotationPointerType === "touch" || isKeyboardActivation;
+      annotationPointerType = "";
+      if (!shouldToggle) return;
+      if (pinnedTooltipNodeId === nodeId) {
+        dismissTooltip(nodeId, true);
+        return;
+      }
+      dismissedTooltipNodeId = null;
+      pinnedTooltipNodeId = nodeId;
+      updateNodeEmphasis();
+    });
+    annotation.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        dismissTooltip(nodeId);
+      }
+    });
+    tooltip.addEventListener("pointerenter", (event) => {
+      if (event.pointerType !== "mouse" && event.pointerType !== "pen") return;
+      cancelTooltipLeave();
+      annotationPointedNodeId = null;
+      tooltipPointedNodeId = nodeId;
+      updateNodeEmphasis();
+    });
+    tooltip.addEventListener("pointerleave", () => {
+      scheduleTooltipLeave(nodeId, "tooltip");
+    });
     nodeElement.addEventListener("pointerenter", (event) => {
       if ((event.pointerType !== "mouse" && event.pointerType !== "pen") || event.buttons !== 0) {
         return;
@@ -381,7 +474,14 @@ function configureVisualEditing(source: string): void {
 }
 
 function updateNodeEmphasis(): void {
-  const emphasizedNodeId = pointedNodeId ?? focusedNodeId;
+  const openTooltipNodeId = getOpenTooltipNodeId();
+  const emphasizedNodeId =
+    pinnedTooltipNodeId ??
+    openTooltipNodeId ??
+    annotationPointedNodeId ??
+    tooltipPointedNodeId ??
+    pointedNodeId ??
+    focusedNodeId;
 
   preview.querySelectorAll<HTMLElement>("[data-editor-node-id]").forEach((element) => {
     element.classList.toggle(
@@ -389,6 +489,63 @@ function updateNodeEmphasis(): void {
       emphasizedNodeId !== null && element.dataset.editorNodeId === emphasizedNodeId,
     );
   });
+  preview.querySelectorAll<HTMLButtonElement>(".node-shape-annotation").forEach((annotation) => {
+    const nodeId = annotation.dataset.editorNodeId;
+    const isOpen = nodeId === openTooltipNodeId;
+    const tooltip = nodeId
+      ? preview.querySelector<HTMLElement>(`#node-shape-tooltip-${sequenceSafeId(nodeId)}`)
+      : null;
+    annotation.setAttribute("aria-expanded", String(isOpen));
+    if (tooltip) tooltip.hidden = !isOpen;
+  });
+  scheduleAnnotationLayout();
+}
+
+function getOpenTooltipNodeId(): string | null {
+  const candidate =
+    pinnedTooltipNodeId ??
+    annotationPointedNodeId ??
+    tooltipPointedNodeId ??
+    annotationFocusedNodeId;
+  return candidate === dismissedTooltipNodeId ? null : candidate;
+}
+
+function dismissTooltip(nodeId: string, blurTrigger = false): void {
+  pinnedTooltipNodeId = null;
+  dismissedTooltipNodeId = nodeId;
+  annotationFocusedNodeId = null;
+  const trigger = preview.querySelector<HTMLButtonElement>(
+    `.node-shape-annotation[data-editor-node-id="${CSS.escape(nodeId)}"]`,
+  );
+  if (blurTrigger && trigger && document.activeElement === trigger) trigger.blur();
+  updateNodeEmphasis();
+}
+
+function cancelTooltipLeave(): void {
+  if (tooltipLeaveTimer === undefined) return;
+  clearTimeout(tooltipLeaveTimer);
+  tooltipLeaveTimer = undefined;
+}
+
+function scheduleTooltipLeave(nodeId: string, source: "annotation" | "tooltip"): void {
+  cancelTooltipLeave();
+  tooltipLeaveTimer = setTimeout(() => {
+    tooltipLeaveTimer = undefined;
+    if (source === "annotation" && annotationPointedNodeId === nodeId) {
+      annotationPointedNodeId = null;
+    }
+    if (source === "tooltip" && tooltipPointedNodeId === nodeId) {
+      tooltipPointedNodeId = null;
+    }
+    if (
+      dismissedTooltipNodeId === nodeId &&
+      annotationPointedNodeId !== nodeId &&
+      tooltipPointedNodeId !== nodeId
+    ) {
+      dismissedTooltipNodeId = null;
+    }
+    updateNodeEmphasis();
+  }, 140);
 }
 
 function scheduleAnnotationLayout(): void {
@@ -414,7 +571,41 @@ function layoutNodeAnnotations(): void {
     const nodeBounds = nodeElement.getBoundingClientRect();
     annotation.style.left = `${nodeBounds.right - previewBounds.left + preview.scrollLeft}px`;
     annotation.style.top = `${nodeBounds.bottom - previewBounds.top + preview.scrollTop}px`;
+    const tooltip = nodeId
+      ? layer.querySelector<HTMLElement>(`#node-shape-tooltip-${sequenceSafeId(nodeId)}`)
+      : null;
+    if (!tooltip) return;
+    if (tooltip.hidden) return;
+    const tooltipBounds = tooltip.getBoundingClientRect();
+    const gap = 8;
+    const viewportPadding = 8;
+    const annotationBounds = annotation.getBoundingClientRect();
+    const minLeft = preview.scrollLeft + viewportPadding;
+    const maxLeft =
+      preview.scrollLeft + preview.clientWidth - tooltipBounds.width - viewportPadding;
+    const preferredLeft =
+      annotationBounds.right - previewBounds.left + preview.scrollLeft - tooltipBounds.width * 0.82;
+    const left = Math.min(Math.max(preferredLeft, minLeft), Math.max(minLeft, maxLeft));
+    const spaceAbove = annotationBounds.top - previewBounds.top;
+    const preferredTop =
+      spaceAbove >= tooltipBounds.height + gap
+        ? annotationBounds.top -
+          previewBounds.top +
+          preview.scrollTop -
+          tooltipBounds.height -
+          gap
+        : annotationBounds.bottom - previewBounds.top + preview.scrollTop + gap;
+    const minTop = preview.scrollTop + viewportPadding;
+    const maxTop =
+      preview.scrollTop + preview.clientHeight - tooltipBounds.height - viewportPadding;
+    const top = Math.min(Math.max(preferredTop, minTop), Math.max(minTop, maxTop));
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${top}px`;
   });
+}
+
+function sequenceSafeId(value: string): string {
+  return value.replaceAll(/[^A-Za-z0-9_-]/g, "-");
 }
 
 function selectNode(nodeId: string): void {

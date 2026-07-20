@@ -314,6 +314,8 @@ select {
   text-overflow: ellipsis;
   white-space: nowrap;
   backdrop-filter: blur(12px) saturate(180%);
+  cursor: help;
+  pointer-events: auto;
   transition:
     background-color 120ms ease,
     border-color 120ms ease,
@@ -321,6 +323,11 @@ select {
     color 120ms ease,
     transform 120ms ease;
   transform-origin: center;
+}
+
+.node-shape-annotation:focus-visible {
+  outline: 3px solid rgb(0 122 255 / 28%);
+  outline-offset: 2px;
 }
 
 .node-shape-annotation.is-emphasized {
@@ -331,6 +338,40 @@ select {
   box-shadow:
     0 2px 4px rgb(0 0 0 / 8%),
     0 6px 16px rgb(0 122 255 / 16%);
+}
+
+.node-shape-tooltip {
+  position: absolute;
+  z-index: 2;
+  display: grid;
+  width: min(15rem, calc(100% - 1rem));
+  gap: 0.25rem;
+  padding: 0.65rem 0.75rem;
+  transform-origin: 82% 100%;
+  border: 1px solid rgb(255 255 255 / 90%);
+  border-radius: 0.72rem;
+  background: rgb(255 255 255 / 94%);
+  color: #3a3a3c;
+  box-shadow:
+    0 2px 5px rgb(0 0 0 / 8%),
+    0 12px 32px rgb(0 0 0 / 14%);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  pointer-events: auto;
+  backdrop-filter: blur(18px) saturate(180%);
+}
+
+.node-shape-tooltip[hidden] {
+  display: none;
+}
+
+.node-shape-tooltip strong {
+  color: #1d1d1f;
+  font-size: 0.75rem;
+}
+
+.node-shape-tooltip span {
+  color: #636366;
 }
 
 .node-label-editor {
@@ -518,6 +559,20 @@ select {
     color: #64d2ff;
   }
 
+  .node-shape-tooltip {
+    border-color: rgb(255 255 255 / 12%);
+    background: rgb(44 44 46 / 96%);
+    color: #f5f5f7;
+  }
+
+  .node-shape-tooltip strong {
+    color: #f5f5f7;
+  }
+
+  .node-shape-tooltip span {
+    color: #d1d1d6;
+  }
+
   .action-button {
     border-color: rgb(255 255 255 / 9%);
     background: rgb(58 58 60 / 82%);
@@ -564,7 +619,8 @@ select {
   .chrome,
   .action-button,
   .node-toolbar,
-  .node-shape-annotation {
+  .node-shape-annotation,
+  .node-shape-tooltip {
     background: #fff;
     backdrop-filter: none;
   }
@@ -574,7 +630,8 @@ select {
   .chrome,
   .action-button,
   .node-toolbar,
-  .node-shape-annotation {
+  .node-shape-annotation,
+  .node-shape-tooltip {
     background: #2c2c2e;
   }
 }
@@ -582,6 +639,12 @@ select {
 @media (prefers-contrast: more) {
   .chrome {
     border-color: currentColor;
+    backdrop-filter: none;
+  }
+
+  .node-shape-tooltip {
+    border-color: currentColor;
+    background: #fff;
     backdrop-filter: none;
   }
 }
