@@ -1,6 +1,16 @@
+/**
+ * Visual editingで扱うFlowchart domain modelとMermaid sourceの相互変換です。
+ *
+ * このmoduleはDOMやCodeMirrorへ依存しません。そのため、UI frameworkを
+ * Vueへ変更しても、対応しているMermaid構文と編集規則をそのまま再利用できます。
+ */
+
+/** Mermaid FlowchartがNodeを並べる方向です。 */
 export type FlowDirection = "TD" | "TB" | "LR" | "RL" | "BT";
+/** 現在のvisual editorが読み書きできるNode shapeです。 */
 export type NodeShape = "rectangle" | "rounded" | "terminal" | "decision" | "circle";
 
+/** Node shapeの意味を、短い表示とaccessibleな説明へ変換します。 */
 export interface NodeSemantics {
   shortLabel: string;
   accessibleDescription: string;
@@ -35,12 +45,14 @@ export const NODE_SHAPE_SEMANTICS: Record<NodeShape, NodeSemantics> = {
   },
 };
 
+/** Flowchartを構成する一つのNodeです。 */
 export interface FlowNode {
   id: string;
   label: string;
   shape: NodeShape;
 }
 
+/** 二つのNodeを結ぶ一方向または無方向のEdgeです。 */
 export interface FlowEdge {
   from: string;
   to: string;
@@ -48,21 +60,30 @@ export interface FlowEdge {
   connector: "-->" | "---" | "-.->" | "==>";
 }
 
+/**
+ * UIが安全に変更できるFlowchartの内部表現です。
+ *
+ * Mermaidの全構文を表すASTではありません。Parserが対応できない構文を
+ * 検出した場合は、誤ってsourceを失わないようにmodelを生成しません。
+ */
 export interface FlowchartModel {
   direction: FlowDirection;
   nodes: FlowNode[];
   edges: FlowEdge[];
 }
 
+/** CodeMirrorと同じUTF-16 offsetによる半開区間 `[from, to)` です。 */
 export interface SourceRange {
   from: number;
   to: number;
 }
 
+/** Source中に現れるNode IDと、その場でshapeを宣言しているかを表します。 */
 export interface NodeSourceOccurrence extends SourceRange {
   kind: "explicit" | "bare";
 }
 
+/** Node IDから、source内にあるすべての出現位置を引くためのindexです。 */
 export type NodeSourceRangeMap = Readonly<Partial<Record<string, readonly NodeSourceOccurrence[]>>>;
 
 interface SourceLine {
@@ -94,6 +115,12 @@ const labeledEdgeLineRangePattern = new RegExp(
   "d",
 );
 
+/**
+ * Mermaid sourceをvisual editor用の限定的なFlowchart modelへ変換します。
+ *
+ * @param source - 利用者が入力したMermaid source。
+ * @returns 対応構文ならmodel、非対応ならUIへ表示できるreason。
+ */
 export function parseFlowchart(source: string): ParseResult {
   const lines = scanSourceLines(source);
   const headerIndex = lines.findIndex(({ text }) => /^\s*(flowchart|graph)\s+/i.test(text));
@@ -166,11 +193,13 @@ export function parseFlowchart(source: string): ParseResult {
 }
 
 /**
- * Returns every supported node occurrence as an absolute, half-open source range.
+ * 対応するすべてのNode出現箇所を、source全体の半開区間として返します。
  *
- * An explicit node with shape or label syntax includes that syntax in its range.
- * A bare node occurrence includes only its ID. Invalid or unsupported flowcharts
- * return null, so callers never receive a partial mapping.
+ * Shapeやlabelを宣言するNodeは構文全体を、参照だけのNodeはIDだけを範囲に
+ * 含めます。無効または非対応のFlowchartでは部分的な対応表を返さず、
+ * `null`にすることで誤ったhighlightを防ぎます。
+ *
+ * @param source - 対応位置を調べるMermaid source。
  */
 export function getNodeSourceRanges(source: string): NodeSourceRangeMap | null {
   if (!parseFlowchart(source).model) return null;
@@ -207,6 +236,11 @@ export function getNodeSourceRanges(source: string): NodeSourceRangeMap | null {
   return result;
 }
 
+/**
+ * Visual editorのmodelから、安定した形式のMermaid sourceを生成します。
+ *
+ * @param model - SerializeするFlowchart。
+ */
 export function serializeFlowchart(model: FlowchartModel): string {
   const nodeLines = model.nodes.map((node) => `  ${node.id}${formatNode(node)}`);
   const edgeLines = model.edges.map((edge) => {
@@ -219,6 +253,9 @@ export function serializeFlowchart(model: FlowchartModel): string {
   );
 }
 
+/**
+ * 編集前のmodelを変更しないため、NodeとEdgeを含めて複製します。
+ */
 export function cloneFlowchart(model: FlowchartModel): FlowchartModel {
   return {
     direction: model.direction,
@@ -227,6 +264,9 @@ export function cloneFlowchart(model: FlowchartModel): FlowchartModel {
   };
 }
 
+/**
+ * 既存Nodeと衝突しない`nodeN`形式のIDを返します。
+ */
 export function nextNodeId(model: FlowchartModel): string {
   const ids = new Set(model.nodes.map((node) => node.id));
   let number = 1;
