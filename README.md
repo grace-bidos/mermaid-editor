@@ -17,3 +17,5 @@ pnpm dev
 - `pnpm typecheck`: TypeScriptの型チェック
 
 入力内容はブラウザの`localStorage`に自動保存されます。
+
+Code reviewの運用は[Code review](docs/code-review.md)を参照してください。
