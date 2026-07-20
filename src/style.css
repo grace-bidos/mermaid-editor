@@ -296,6 +296,65 @@ select {
   transform: none;
 }
 
+.edge-handle-layer {
+  pointer-events: none;
+}
+
+.edge-endpoint-handle {
+  fill: rgb(255 255 255 / 92%);
+  stroke: #007aff;
+  stroke-width: 2;
+  cursor: grab;
+  opacity: 0.72;
+  pointer-events: auto;
+  touch-action: none;
+  transition:
+    opacity 120ms ease,
+    r 120ms ease,
+    fill 120ms ease;
+}
+
+.edge-endpoint-handle:hover,
+.edge-endpoint-handle:focus-visible,
+.edge-endpoint-handle.is-dragging {
+  fill: #007aff;
+  opacity: 1;
+  outline: none;
+  r: 9px;
+}
+
+.edge-endpoint-handle.is-dragging {
+  cursor: grabbing;
+}
+
+.preview .visual-editable.is-edge-losing > :first-child {
+  filter: drop-shadow(0 2px 5px rgb(255 59 48 / 18%));
+  stroke: #ff3b30 !important;
+  stroke-width: 2px !important;
+  stroke-dasharray: 5 3;
+  transform: scale(0.94);
+}
+
+.preview .visual-editable.is-edge-gaining > :first-child {
+  filter: drop-shadow(0 4px 10px rgb(0 122 255 / 30%));
+  stroke: #007aff !important;
+  stroke-width: 3px !important;
+  stroke-dasharray: none;
+  transform: scale(1.06);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .edge-endpoint-handle,
+  .preview .visual-editable > :first-child {
+    transition-duration: 0.01ms;
+  }
+
+  .preview .visual-editable.is-edge-losing > :first-child,
+  .preview .visual-editable.is-edge-gaining > :first-child {
+    transform: none;
+  }
+}
+
 .cm-node-source-correspondence {
   border-radius: 0.2rem;
   background: rgb(88 86 214 / 14%);
