@@ -54,6 +54,22 @@ export interface FlowchartModel {
   edges: FlowEdge[];
 }
 
+export interface SourceRange {
+  from: number;
+  to: number;
+}
+
+export interface NodeSourceOccurrence extends SourceRange {
+  kind: "explicit" | "bare";
+}
+
+export type NodeSourceRangeMap = Readonly<Partial<Record<string, readonly NodeSourceOccurrence[]>>>;
+
+interface SourceLine {
+  text: string;
+  start: number;
+}
+
 interface ParseResult {
   model: FlowchartModel | null;
   reason?: string;
@@ -68,20 +84,29 @@ const edgeLinePattern = new RegExp(
 const labeledEdgeLinePattern = new RegExp(
   `^\\s*${NODE_TOKEN}\\s*--\\s+(.+?)\\s+-->\\s*${NODE_TOKEN}\\s*$`,
 );
+const nodeLineRangePattern = new RegExp(`^\\s*${NODE_TOKEN}\\s*$`, "d");
+const edgeLineRangePattern = new RegExp(
+  `^\\s*${NODE_TOKEN}\\s*(-->|---|-\\.->|==>)\\s*(?:\\|([^|]*)\\|\\s*)?${NODE_TOKEN}\\s*$`,
+  "d",
+);
+const labeledEdgeLineRangePattern = new RegExp(
+  `^\\s*${NODE_TOKEN}\\s*--\\s+(.+?)\\s+-->\\s*${NODE_TOKEN}\\s*$`,
+  "d",
+);
 
 export function parseFlowchart(source: string): ParseResult {
-  const lines = source.split(/\r?\n/);
-  const headerIndex = lines.findIndex((line) => /^\s*(flowchart|graph)\s+/i.test(line));
+  const lines = scanSourceLines(source);
+  const headerIndex = lines.findIndex(({ text }) => /^\s*(flowchart|graph)\s+/i.test(text));
   if (headerIndex < 0) return { model: null, reason: "フローチャートのみビジュアル編集できます" };
 
-  const header = lines[headerIndex]?.match(/^\s*(?:flowchart|graph)\s+(TD|TB|LR|RL|BT)\s*$/i);
+  const header = lines[headerIndex]?.text.match(/^\s*(?:flowchart|graph)\s+(TD|TB|LR|RL|BT)\s*$/i);
   if (!header?.[1]) return { model: null, reason: "図の方向を読み取れません" };
 
   const nodes = new Map<string, FlowNode>();
   const edges: FlowEdge[] = [];
 
   for (let index = headerIndex + 1; index < lines.length; index += 1) {
-    const line = lines[index]?.trim() ?? "";
+    const line = lines[index]?.text.trim() ?? "";
     if (!line || line.startsWith("%%")) continue;
 
     const labeledEdgeMatch = line.match(labeledEdgeLinePattern);
@@ -138,6 +163,48 @@ export function parseFlowchart(source: string): ParseResult {
       edges,
     },
   };
+}
+
+/**
+ * Returns every supported node occurrence as an absolute, half-open source range.
+ *
+ * An explicit node with shape or label syntax includes that syntax in its range.
+ * A bare node occurrence includes only its ID. Invalid or unsupported flowcharts
+ * return null, so callers never receive a partial mapping.
+ */
+export function getNodeSourceRanges(source: string): NodeSourceRangeMap | null {
+  if (!parseFlowchart(source).model) return null;
+
+  const lines = scanSourceLines(source);
+  const headerIndex = lines.findIndex(({ text }) => /^\s*(flowchart|graph)\s+/i.test(text));
+  const occurrences = new Map<string, NodeSourceOccurrence[]>();
+
+  for (let index = headerIndex + 1; index < lines.length; index += 1) {
+    const sourceLine = lines[index];
+    if (!sourceLine) continue;
+    const { text: line, start: lineStart } = sourceLine;
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith("%%")) {
+      const labeledEdgeMatch = labeledEdgeLineRangePattern.exec(line);
+      if (labeledEdgeMatch) {
+        addNodeOccurrence(occurrences, labeledEdgeMatch, 1, 2, lineStart);
+        addNodeOccurrence(occurrences, labeledEdgeMatch, 4, 5, lineStart);
+      } else {
+        const edgeMatch = edgeLineRangePattern.exec(line);
+        if (edgeMatch) {
+          addNodeOccurrence(occurrences, edgeMatch, 1, 2, lineStart);
+          addNodeOccurrence(occurrences, edgeMatch, 5, 6, lineStart);
+        } else {
+          const nodeMatch = nodeLineRangePattern.exec(line);
+          if (nodeMatch) addNodeOccurrence(occurrences, nodeMatch, 1, 2, lineStart);
+        }
+      }
+    }
+  }
+
+  const result = Object.create(null) as Record<string, readonly NodeSourceOccurrence[]>;
+  for (const [id, nodeOccurrences] of occurrences) result[id] = nodeOccurrences;
+  return result;
 }
 
 export function serializeFlowchart(model: FlowchartModel): string {
@@ -229,4 +296,40 @@ function stripQuotes(label: string): string {
 
 function isConnector(value: string | undefined): value is FlowEdge["connector"] {
   return value === "-->" || value === "---" || value === "-.->" || value === "==>";
+}
+
+function addNodeOccurrence(
+  occurrences: Map<string, NodeSourceOccurrence[]>,
+  match: RegExpExecArray,
+  idGroup: number,
+  syntaxGroup: number,
+  lineStart: number,
+): void {
+  const id = match[idGroup];
+  const idRange = match.indices?.[idGroup];
+  if (!id || !idRange) return;
+
+  const syntaxRange = match.indices?.[syntaxGroup];
+  const existing = occurrences.get(id) ?? [];
+  existing.push({
+    from: lineStart + idRange[0],
+    to: lineStart + (syntaxRange?.[1] ?? idRange[1]),
+    kind: syntaxRange ? "explicit" : "bare",
+  });
+  occurrences.set(id, existing);
+}
+
+function scanSourceLines(source: string): SourceLine[] {
+  const lines: SourceLine[] = [];
+  let start = 0;
+
+  while (start <= source.length) {
+    let end = start;
+    while (end < source.length && source[end] !== "\n" && source[end] !== "\r") end += 1;
+    lines.push({ text: source.slice(start, end), start });
+    if (end === source.length) break;
+    start = source.startsWith("\r\n", end) ? end + 2 : end + 1;
+  }
+
+  return lines;
 }

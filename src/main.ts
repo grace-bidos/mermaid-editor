@@ -1,6 +1,7 @@
-import { basicSetup, EditorView } from "codemirror";
+import { basicSetup } from "codemirror";
 import { redo, undo } from "@codemirror/commands";
-import { placeholder } from "@codemirror/view";
+import { StateEffect, StateField } from "@codemirror/state";
+import { Decoration, EditorView, placeholder } from "@codemirror/view";
 import {
   Check,
   Copy,
@@ -14,6 +15,7 @@ import {
 import mermaid from "mermaid";
 import {
   cloneFlowchart,
+  getNodeSourceRanges,
   nextNodeId,
   NODE_SHAPE_SEMANTICS,
   parseFlowchart,
@@ -21,6 +23,8 @@ import {
   type FlowDirection,
   type FlowchartModel,
   type NodeShape,
+  type NodeSourceRangeMap,
+  type SourceRange,
 } from "./flowchart";
 import "./style.css";
 
@@ -185,6 +189,29 @@ let pinnedTooltipNodeId: string | null = null;
 let dismissedTooltipNodeId: string | null = null;
 let annotationFrame: number | undefined;
 let tooltipLeaveTimer: ReturnType<typeof setTimeout> | undefined;
+let nodeSourceRanges: NodeSourceRangeMap | null = null;
+let sourceHoveredNodeId: string | null = null;
+let sourceCaretNodeId: string | null = null;
+
+const setSourceHighlights = StateEffect.define<readonly SourceRange[]>();
+const sourceHighlightField = StateField.define({
+  create: () => Decoration.none,
+  update(highlights, transaction) {
+    let next = highlights.map(transaction.changes);
+    for (const effect of transaction.effects) {
+      if (effect.is(setSourceHighlights)) {
+        next = Decoration.set(
+          effect.value.map(({ from, to }) =>
+            Decoration.mark({ class: "cm-node-source-correspondence" }).range(from, to),
+          ),
+          true,
+        );
+      }
+    }
+    return next;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
 
 const annotationResizeObserver = new ResizeObserver(() => {
   scheduleAnnotationLayout();
@@ -219,10 +246,24 @@ const editor = new EditorView({
       "aria-multiline": "true",
       spellcheck: "false",
     }),
+    sourceHighlightField,
+    EditorView.domEventHandlers({
+      mousemove(event, view) {
+        updateSourceHover(view.posAtCoords({ x: event.clientX, y: event.clientY }));
+      },
+      mouseleave() {
+        updateSourceHover(null);
+      },
+    }),
     EditorView.updateListener.of((update) => {
+      if (update.selectionSet && !update.docChanged) updateCaretCorrespondence(update.state.selection.main.head);
       if (!update.docChanged) return;
 
       const source = update.state.doc.toString();
+      nodeSourceRanges = null;
+      sourceHoveredNodeId = null;
+      sourceCaretNodeId = null;
+      queueMicrotask(() => updateCorrespondence());
       localStorage.setItem(STORAGE_KEY, source);
       copyButton.disabled = !source.trim();
       scheduleRender(source);
@@ -261,11 +302,12 @@ scheduleRender(initialDocument, 0);
 
 function scheduleRender(source: string, delay = RENDER_DELAY_MS): void {
   if (renderTimer !== undefined) clearTimeout(renderTimer);
+  ++renderSequence;
 
   if (!source.trim()) {
-    ++renderSequence;
     latestSvg = "";
     downloadButton.disabled = true;
+    clearCorrespondence();
     showEmptyPreview();
     errorPanel.replaceChildren();
     errorPanel.classList.add("hidden");
@@ -299,6 +341,7 @@ async function renderDiagram(source: string): Promise<void> {
   } catch (error: unknown) {
     if (sequence !== renderSequence) return;
 
+    clearCorrespondence();
     errorPanel.textContent = readableError(error);
     errorPanel.classList.remove("hidden");
     setStatus("error", "構文を確認してください");
@@ -307,10 +350,16 @@ async function renderDiagram(source: string): Promise<void> {
 
 function configureVisualEditing(source: string): void {
   const result = parseFlowchart(source);
+  nodeSourceRanges = getNodeSourceRanges(source);
+  sourceHoveredNodeId = null;
+  sourceCaretNodeId = null;
   currentFlowchart = result.model;
   visualControls.classList.toggle("hidden", !currentFlowchart);
 
   if (!currentFlowchart) {
+    sourceHoveredNodeId = null;
+    sourceCaretNodeId = null;
+    updateCorrespondence();
     selectedNodeId = null;
     nodeToolbar.classList.add("hidden");
     setStatus("ready", result.reason ?? "表示できました");
@@ -429,22 +478,27 @@ function configureVisualEditing(source: string): void {
       }
       pointedNodeId = nodeId;
       updateNodeEmphasis();
+      updateCorrespondence();
     });
     nodeElement.addEventListener("pointerleave", () => {
       if (pointedNodeId === nodeId) pointedNodeId = null;
       updateNodeEmphasis();
+      updateCorrespondence();
     });
     nodeElement.addEventListener("pointercancel", () => {
       if (pointedNodeId === nodeId) pointedNodeId = null;
       updateNodeEmphasis();
+      updateCorrespondence();
     });
     nodeElement.addEventListener("focus", () => {
       focusedNodeId = nodeId;
       updateNodeEmphasis();
+      updateCorrespondence();
     });
     nodeElement.addEventListener("blur", () => {
       if (focusedNodeId === nodeId) focusedNodeId = null;
       updateNodeEmphasis();
+      updateCorrespondence();
     });
     nodeElement.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -462,6 +516,7 @@ function configureVisualEditing(source: string): void {
       }
     });
   });
+  updateCaretCorrespondence(editor.state.selection.main.head);
   scheduleAnnotationLayout();
 
   if (selectedNodeId && currentFlowchart.nodes.some((node) => node.id === selectedNodeId)) {
@@ -499,6 +554,61 @@ function updateNodeEmphasis(): void {
     if (tooltip) tooltip.hidden = !isOpen;
   });
   scheduleAnnotationLayout();
+}
+
+function updateSourceHover(position: number | null): void {
+  const nextNodeId = position === null ? null : findNodeIdAtPosition(position);
+  if (sourceHoveredNodeId === nextNodeId) return;
+  sourceHoveredNodeId = nextNodeId;
+  updateCorrespondence();
+}
+
+function updateCaretCorrespondence(position: number): void {
+  const nextNodeId = findNodeIdAtPosition(position);
+  if (sourceCaretNodeId === nextNodeId) {
+    updateCorrespondence();
+    return;
+  }
+  sourceCaretNodeId = nextNodeId;
+  updateCorrespondence();
+}
+
+function findNodeIdAtPosition(position: number): string | null {
+  if (!nodeSourceRanges) return null;
+
+  for (const [nodeId, occurrences] of Object.entries(nodeSourceRanges)) {
+    if (occurrences?.some(({ from, to }) => position >= from && position < to)) return nodeId;
+  }
+  return null;
+}
+
+function updateCorrespondence(): void {
+  const previewNodeId = pointedNodeId ?? focusedNodeId;
+  const sourceNodeId = sourceHoveredNodeId ?? sourceCaretNodeId;
+  const activeNodeId = previewNodeId ?? sourceNodeId;
+  const ranges = activeNodeId ? (nodeSourceRanges?.[activeNodeId] ?? []) : [];
+
+  editor.dispatch({
+    effects: setSourceHighlights.of(ranges),
+  });
+
+  preview.querySelectorAll<SVGGElement>("g.node.visual-editable").forEach((nodeElement) => {
+    nodeElement.classList.toggle(
+      "is-source-corresponding",
+      previewNodeId === null &&
+        sourceNodeId !== null &&
+        nodeElement.dataset.editorNodeId === sourceNodeId,
+    );
+  });
+}
+
+function clearCorrespondence(): void {
+  nodeSourceRanges = null;
+  sourceHoveredNodeId = null;
+  sourceCaretNodeId = null;
+  pointedNodeId = null;
+  focusedNodeId = null;
+  updateCorrespondence();
 }
 
 function getOpenTooltipNodeId(): string | null {
