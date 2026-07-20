@@ -253,22 +253,38 @@ select {
   outline: none;
 }
 
+.preview .visual-editable:focus-visible {
+  outline: 2px solid #007aff;
+  outline-offset: 4px;
+}
+
 .preview .visual-editable > :first-child {
   transition:
     filter 120ms ease,
+    transform 120ms ease,
     stroke 120ms ease,
     stroke-width 120ms ease;
+  transform-box: fill-box;
+  transform-origin: center;
 }
 
-.preview .visual-editable:hover > :first-child {
+.preview .visual-editable.is-emphasized > :first-child {
   filter: drop-shadow(0 2px 5px rgb(0 122 255 / 18%));
   stroke: #007aff !important;
+  stroke-width: 2px !important;
+  transform: scale(1.035);
 }
 
 .preview .visual-editable.is-selected > :first-child {
   filter: drop-shadow(0 3px 8px rgb(0 122 255 / 24%));
   stroke: #007aff !important;
   stroke-width: 3px !important;
+  transform: none;
+}
+
+.preview .visual-editable.is-selected.is-emphasized > :first-child {
+  filter: drop-shadow(0 4px 10px rgb(0 122 255 / 30%));
+  transform: scale(1.035);
 }
 
 .node-annotation-layer {
@@ -298,6 +314,23 @@ select {
   text-overflow: ellipsis;
   white-space: nowrap;
   backdrop-filter: blur(12px) saturate(180%);
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    color 120ms ease,
+    transform 120ms ease;
+  transform-origin: center;
+}
+
+.node-shape-annotation.is-emphasized {
+  transform: translate(-82%, -38%) scale(1.12);
+  border-color: rgb(0 122 255 / 28%);
+  background: rgb(239 247 255 / 96%);
+  color: #0066d6;
+  box-shadow:
+    0 2px 4px rgb(0 0 0 / 8%),
+    0 6px 16px rgb(0 122 255 / 16%);
 }
 
 .node-label-editor {
@@ -477,6 +510,12 @@ select {
     border-color: rgb(255 255 255 / 10%);
     background: rgb(58 58 60 / 90%);
     color: #d1d1d6;
+  }
+
+  .node-shape-annotation.is-emphasized {
+    border-color: rgb(10 132 255 / 44%);
+    background: rgb(35 59 82 / 96%);
+    color: #64d2ff;
   }
 
   .action-button {

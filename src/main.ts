@@ -176,6 +176,8 @@ let renderSequence = 0;
 let renderTimer: ReturnType<typeof setTimeout> | undefined;
 let currentFlowchart: FlowchartModel | null = null;
 let selectedNodeId: string | null = null;
+let pointedNodeId: string | null = null;
+let focusedNodeId: string | null = null;
 let annotationFrame: number | undefined;
 
 const annotationResizeObserver = new ResizeObserver(() => {
@@ -298,6 +300,8 @@ function configureVisualEditing(source: string): void {
     return;
   }
   const model = currentFlowchart;
+  pointedNodeId = null;
+  focusedNodeId = null;
 
   const annotationLayer = document.createElement("div");
   annotationLayer.className = "node-annotation-layer";
@@ -326,6 +330,29 @@ function configureVisualEditing(source: string): void {
     annotation.dataset.editorNodeId = nodeId;
     annotation.textContent = semantics.shortLabel;
     annotationLayer.append(annotation);
+    nodeElement.addEventListener("pointerenter", (event) => {
+      if ((event.pointerType !== "mouse" && event.pointerType !== "pen") || event.buttons !== 0) {
+        return;
+      }
+      pointedNodeId = nodeId;
+      updateNodeEmphasis();
+    });
+    nodeElement.addEventListener("pointerleave", () => {
+      if (pointedNodeId === nodeId) pointedNodeId = null;
+      updateNodeEmphasis();
+    });
+    nodeElement.addEventListener("pointercancel", () => {
+      if (pointedNodeId === nodeId) pointedNodeId = null;
+      updateNodeEmphasis();
+    });
+    nodeElement.addEventListener("focus", () => {
+      focusedNodeId = nodeId;
+      updateNodeEmphasis();
+    });
+    nodeElement.addEventListener("blur", () => {
+      if (focusedNodeId === nodeId) focusedNodeId = null;
+      updateNodeEmphasis();
+    });
     nodeElement.addEventListener("click", (event) => {
       event.stopPropagation();
       selectNode(nodeId);
@@ -351,6 +378,17 @@ function configureVisualEditing(source: string): void {
     nodeToolbar.classList.add("hidden");
   }
   setStatus("ready", "図をクリックして編集");
+}
+
+function updateNodeEmphasis(): void {
+  const emphasizedNodeId = pointedNodeId ?? focusedNodeId;
+
+  preview.querySelectorAll<HTMLElement>("[data-editor-node-id]").forEach((element) => {
+    element.classList.toggle(
+      "is-emphasized",
+      emphasizedNodeId !== null && element.dataset.editorNodeId === emphasizedNodeId,
+    );
+  });
 }
 
 function scheduleAnnotationLayout(): void {
