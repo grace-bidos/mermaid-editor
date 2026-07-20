@@ -287,6 +287,21 @@ select {
   transform: scale(1.035);
 }
 
+.preview .visual-editable.is-source-corresponding > :first-child,
+.preview .visual-editable.is-selected.is-source-corresponding > :first-child {
+  filter: drop-shadow(0 3px 8px rgb(88 86 214 / 28%));
+  stroke: #5856d6 !important;
+  stroke-width: 3px !important;
+  stroke-dasharray: 5 2;
+  transform: none;
+}
+
+.cm-node-source-correspondence {
+  border-radius: 0.2rem;
+  background: rgb(88 86 214 / 14%);
+  box-shadow: inset 0 -2px 0 rgb(88 86 214 / 46%);
+}
+
 .node-annotation-layer {
   position: absolute;
   inset: 0;
@@ -557,6 +572,17 @@ select {
     border-color: rgb(10 132 255 / 44%);
     background: rgb(35 59 82 / 96%);
     color: #64d2ff;
+  }
+
+  .preview .visual-editable.is-source-corresponding > :first-child,
+  .preview .visual-editable.is-selected.is-source-corresponding > :first-child {
+    filter: drop-shadow(0 3px 8px rgb(94 92 230 / 34%));
+    stroke: #bf5af2 !important;
+  }
+
+  .cm-node-source-correspondence {
+    background: rgb(191 90 242 / 18%);
+    box-shadow: inset 0 -2px 0 rgb(191 90 242 / 56%);
   }
 
   .node-shape-tooltip {
