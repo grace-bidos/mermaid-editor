@@ -18,4 +18,7 @@ pnpm dev
 
 入力内容はブラウザの`localStorage`に自動保存されます。
 
-Code reviewの運用は[Code review](docs/code-review.md)を参照してください。
+開発運用については、次のdocumentを参照してください。
+
+- [Development workflow](docs/development-workflow.md)
+- [Code review](docs/code-review.md)
