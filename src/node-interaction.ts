@@ -4,6 +4,7 @@ import {
   nextNodeId,
   NODE_SHAPE_SEMANTICS,
   parseFlowchart,
+  replaceFlowEdgeEndpoint,
   serializeFlowchart,
   type FlowDirection,
   type FlowchartModel,
@@ -93,6 +94,7 @@ export interface NodeInteractionController {
 export function createNodeInteraction(options: NodeInteractionOptions): NodeInteractionController {
   const { preview, visualControls, nodeToolbar, directionSelect, shapeSelect } = options.elements;
   let currentFlowchart: FlowchartModel | null = null;
+  let renderedSource = "";
   let selectedNodeId: string | null = null;
   let pointedNodeId: string | null = null;
   let focusedNodeId: string | null = null;
@@ -106,6 +108,9 @@ export function createNodeInteraction(options: NodeInteractionOptions): NodeInte
   let nodeSourceRanges: NodeSourceRangeMap | null = null;
   let sourceHoveredNodeId: string | null = null;
   let sourceCaretNodeId: string | null = null;
+  let edgeDrag: EdgeDragState | null = null;
+  let pendingEdgeSnap: { losingNodeId: string; gainingNodeId: string } | null = null;
+  let edgeSnapTimer: ReturnType<typeof setTimeout> | undefined;
 
   const resizeObserver = new ResizeObserver(scheduleAnnotationLayout);
   resizeObserver.observe(preview);
@@ -114,6 +119,7 @@ export function createNodeInteraction(options: NodeInteractionOptions): NodeInte
   document.addEventListener("keydown", handleDocumentKeyDown);
 
   function configureRendered(source: string): void {
+    renderedSource = source;
     const result = parseFlowchart(source);
     nodeSourceRanges = getNodeSourceRanges(source);
     sourceHoveredNodeId = null;
@@ -170,6 +176,8 @@ export function createNodeInteraction(options: NodeInteractionOptions): NodeInte
       bindAnnotation(annotation, tooltip, nodeId);
       bindNode(nodeElement, nodeId);
     });
+    bindEdgeHandles(model);
+    showPendingEdgeSnap();
     updateCaret(options.editor.getCaretPosition());
     scheduleAnnotationLayout();
     if (selectedNodeId && model.nodes.some((node) => node.id === selectedNodeId)) selectNode(selectedNodeId);
@@ -178,6 +186,199 @@ export function createNodeInteraction(options: NodeInteractionOptions): NodeInte
       nodeToolbar.classList.add("hidden");
     }
     options.setStatus("ready", "図をクリックして編集");
+  }
+
+  /**
+   * Mermaidが描画した各Edgeの両端へ、接続先を直接動かすhandleを重ねます。
+   *
+   * Visual editorが受け付ける構文では、描画された`flowchart-link`の順序と
+   * modelのEdge順序が一致します。数が一致しない場合は誤ったEdgeを書き換え
+   * ないことを優先し、handleを表示しません。
+   */
+  function bindEdgeHandles(model: FlowchartModel): void {
+    const svg = preview.querySelector<SVGSVGElement>("svg");
+    if (!svg || model.edges.length === 0) return;
+    const paths = [...svg.querySelectorAll<SVGPathElement>("path.flowchart-link")];
+    if (
+      paths.length !== model.edges.length ||
+      paths.some((path, index) => {
+        const edge = model.edges[index];
+        return !edge || !path.id.includes(`-L_${edge.from}_${edge.to}_`);
+      })
+    ) return;
+
+    const layer = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    layer.classList.add("edge-handle-layer");
+    // Keyboard操作をまだ提供していないため、assistive technologyへ
+    // buttonとして誤提示せず、pointer-only enhancementとして扱います。
+    layer.setAttribute("aria-hidden", "true");
+    svg.append(layer);
+
+    paths.forEach((path, edgeIndex) => {
+      path.classList.add("visual-editable-edge");
+      bindEdgeHandle(layer, path, edgeIndex, "from");
+      bindEdgeHandle(layer, path, edgeIndex, "to");
+    });
+  }
+
+  function bindEdgeHandle(
+    layer: SVGGElement,
+    path: SVGPathElement,
+    edgeIndex: number,
+    endpoint: "from" | "to",
+  ): void {
+    const totalLength = path.getTotalLength();
+    const point = path.getPointAtLength(endpoint === "from" ? 0 : totalLength);
+    const pathMatrix = path.getCTM();
+    const position = pathMatrix
+      ? new DOMPoint(point.x, point.y).matrixTransform(pathMatrix)
+      : new DOMPoint(point.x, point.y);
+    const handle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    handle.classList.add("edge-endpoint-handle");
+    handle.dataset.edgeIndex = String(edgeIndex);
+    handle.dataset.endpoint = endpoint;
+    handle.setAttribute("cx", String(position.x));
+    handle.setAttribute("cy", String(position.y));
+    handle.setAttribute("r", "7");
+    layer.append(handle);
+    handle.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || !currentFlowchart) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const edge = currentFlowchart.edges[edgeIndex];
+      if (!edge) return;
+      const losingNodeId = endpoint === "from" ? edge.from : edge.to;
+      edgeDrag = {
+        pointerId: event.pointerId,
+        edgeIndex,
+        endpoint,
+        handle,
+        losingNodeId,
+        candidateNodeId: null,
+      };
+      handle.setPointerCapture(event.pointerId);
+      handle.classList.add("is-dragging");
+      setEdgeFeedback(losingNodeId, null);
+    });
+    handle.addEventListener("pointermove", moveEdgeHandle);
+    handle.addEventListener("pointerup", finishEdgeHandle);
+    handle.addEventListener("pointercancel", cancelEdgeHandle);
+    handle.addEventListener("click", (event) => {
+      // Pointer gesture後のsynthesized clickをpreview背景へ到達させません。
+      event.preventDefault();
+      event.stopPropagation();
+    });
+  }
+
+  function moveEdgeHandle(event: PointerEvent): void {
+    if (!edgeDrag || event.pointerId !== edgeDrag.pointerId) return;
+    const svg = edgeDrag.handle.ownerSVGElement;
+    if (!svg) return;
+    const point = screenPointToSvg(svg, event.clientX, event.clientY);
+    edgeDrag.handle.setAttribute("cx", String(point.x));
+    edgeDrag.handle.setAttribute("cy", String(point.y));
+    const candidate = findEdgeCandidate(point, edgeDrag.losingNodeId);
+    edgeDrag.candidateNodeId = candidate;
+    setEdgeFeedback(edgeDrag.losingNodeId, candidate);
+  }
+
+  function finishEdgeHandle(event: PointerEvent): void {
+    if (!edgeDrag || event.pointerId !== edgeDrag.pointerId) return;
+    event.stopPropagation();
+    const drag = edgeDrag;
+    edgeDrag = null;
+    drag.handle.releasePointerCapture(event.pointerId);
+    const gainingNodeId = drag.candidateNodeId;
+    if (!gainingNodeId || gainingNodeId === drag.losingNodeId) {
+      clearEdgeFeedback();
+      configureRenderedPosition(drag);
+      return;
+    }
+    pendingEdgeSnap = { losingNodeId: drag.losingNodeId, gainingNodeId };
+    const nextSource = replaceFlowEdgeEndpoint(
+      renderedSource,
+      drag.edgeIndex,
+      drag.endpoint,
+      gainingNodeId,
+    );
+    if (!nextSource) {
+      pendingEdgeSnap = null;
+      clearEdgeFeedback();
+      configureRenderedPosition(drag);
+      options.setStatus("error", "接続を安全に変更できませんでした");
+      return;
+    }
+    options.editor.replaceSource(nextSource);
+    options.setStatus("ready", "接続を変更しました");
+  }
+
+  function cancelEdgeHandle(event: PointerEvent): void {
+    if (!edgeDrag || event.pointerId !== edgeDrag.pointerId) return;
+    const drag = edgeDrag;
+    edgeDrag = null;
+    clearEdgeFeedback();
+    configureRenderedPosition(drag);
+  }
+
+  function configureRenderedPosition(drag: EdgeDragState): void {
+    const path = preview.querySelectorAll<SVGPathElement>("path.flowchart-link")[drag.edgeIndex];
+    if (!path) return;
+    const length = path.getTotalLength();
+    const point = path.getPointAtLength(drag.endpoint === "from" ? 0 : length);
+    const matrix = path.getCTM();
+    const position = matrix
+      ? new DOMPoint(point.x, point.y).matrixTransform(matrix)
+      : new DOMPoint(point.x, point.y);
+    drag.handle.setAttribute("cx", String(position.x));
+    drag.handle.setAttribute("cy", String(position.y));
+    drag.handle.classList.remove("is-dragging");
+  }
+
+  function findEdgeCandidate(
+    pointer: DOMPoint,
+    losingNodeId: string,
+  ): string | null {
+    let nearest: { id: string; distance: number } | null = null;
+    for (const node of preview.querySelectorAll<SVGGElement>("g.node.visual-editable")) {
+      const id = node.dataset.editorNodeId;
+      if (!id || id === losingNodeId) continue;
+      const box = node.getBBox();
+      const matrix = node.getCTM();
+      const center = matrix
+        ? new DOMPoint(box.x + box.width / 2, box.y + box.height / 2).matrixTransform(matrix)
+        : new DOMPoint(box.x + box.width / 2, box.y + box.height / 2);
+      const distance = Math.hypot(pointer.x - center.x, pointer.y - center.y);
+      const snapDistance = Math.max(44, Math.hypot(box.width, box.height) * 0.65);
+      if (distance <= snapDistance && (!nearest || distance < nearest.distance)) {
+        nearest = { id, distance };
+      }
+    }
+    return nearest?.id ?? null;
+  }
+
+  function setEdgeFeedback(losingNodeId: string, gainingNodeId: string | null): void {
+    preview.querySelectorAll<SVGGElement>("g.node.visual-editable").forEach((node) => {
+      node.classList.toggle("is-edge-losing", node.dataset.editorNodeId === losingNodeId);
+      node.classList.toggle("is-edge-gaining", node.dataset.editorNodeId === gainingNodeId);
+    });
+  }
+
+  function clearEdgeFeedback(): void {
+    preview.querySelectorAll(".is-edge-losing, .is-edge-gaining").forEach((node) => {
+      node.classList.remove("is-edge-losing", "is-edge-gaining");
+    });
+  }
+
+  function showPendingEdgeSnap(): void {
+    if (!pendingEdgeSnap) return;
+    const feedback = pendingEdgeSnap;
+    pendingEdgeSnap = null;
+    setEdgeFeedback(feedback.losingNodeId, feedback.gainingNodeId);
+    if (edgeSnapTimer !== undefined) clearTimeout(edgeSnapTimer);
+    edgeSnapTimer = setTimeout(() => {
+      edgeSnapTimer = undefined;
+      clearEdgeFeedback();
+    }, 520);
   }
 
   function bindAnnotation(annotation: HTMLButtonElement, tooltip: HTMLDivElement, nodeId: string): void {
@@ -531,6 +732,7 @@ export function createNodeInteraction(options: NodeInteractionOptions): NodeInte
     document.removeEventListener("pointerdown", handleDocumentPointerDown);
     document.removeEventListener("keydown", handleDocumentKeyDown);
     cancelTooltipLeave();
+    if (edgeSnapTimer !== undefined) clearTimeout(edgeSnapTimer);
     if (annotationFrame !== undefined) cancelAnimationFrame(annotationFrame);
   }
 
@@ -539,6 +741,26 @@ export function createNodeInteraction(options: NodeInteractionOptions): NodeInte
     clearCorrespondence, changeDirection, changeSelectedShape, addNodeAfterSelection,
     deleteSelectedNode, clearNodeSelection, dispose,
   };
+}
+
+interface EdgeDragState {
+  pointerId: number;
+  edgeIndex: number;
+  endpoint: "from" | "to";
+  handle: SVGCircleElement;
+  losingNodeId: string;
+  candidateNodeId: string | null;
+}
+
+function screenPointToSvg(
+  svg: SVGSVGElement,
+  clientX: number,
+  clientY: number,
+): DOMPoint {
+  const matrix = svg.getScreenCTM();
+  return matrix
+    ? new DOMPoint(clientX, clientY).matrixTransform(matrix.inverse())
+    : new DOMPoint(clientX, clientY);
 }
 
 function getRenderedNodeId(element: SVGGElement, model: FlowchartModel): string | null {

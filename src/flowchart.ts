@@ -237,6 +237,52 @@ export function getNodeSourceRanges(source: string): NodeSourceRangeMap | null {
 }
 
 /**
+ * 一つのEdge endpointだけを置換し、周囲の空白・comment・表記を保持します。
+ *
+ * `edgeIndex`は`parseFlowchart`が返すEdge順序です。同じ二種類の正規表現を
+ * 同じ順序で走査するため、visual previewで選ばれたEdge以外を書き換えません。
+ * Sourceが非対応、indexが範囲外、または新しいIDが不正な場合は`null`を返し、
+ * 全体serializeへfallbackしないことで利用者のsourceを保護します。
+ */
+export function replaceFlowEdgeEndpoint(
+  source: string,
+  edgeIndex: number,
+  endpoint: "from" | "to",
+  nextNodeId: string,
+): string | null {
+  if (!new RegExp(`^${NODE_ID}$`).test(nextNodeId) || !parseFlowchart(source).model) return null;
+
+  const lines = scanSourceLines(source);
+  const headerIndex = lines.findIndex(({ text }) => /^\s*(flowchart|graph)\s+/i.test(text));
+  let currentEdgeIndex = 0;
+
+  for (let index = headerIndex + 1; index < lines.length; index += 1) {
+    const sourceLine = lines[index];
+    if (!sourceLine) continue;
+    const labeledMatch = labeledEdgeLineRangePattern.exec(sourceLine.text);
+    const regularMatch = labeledMatch ? null : edgeLineRangePattern.exec(sourceLine.text);
+    const match = labeledMatch ?? regularMatch;
+    if (!match) continue;
+
+    if (currentEdgeIndex === edgeIndex) {
+      const idGroup = endpoint === "from" ? 1 : labeledMatch ? 4 : 5;
+      const syntaxGroup = endpoint === "from" ? 2 : labeledMatch ? 5 : 6;
+      const idRange = match.indices?.[idGroup];
+      const syntaxRange = match.indices?.[syntaxGroup];
+      if (!idRange) return null;
+      const from = sourceLine.start + idRange[0];
+      // 旧Endpointがinlineでlabel/shapeも宣言している場合、それを新Nodeへ
+      // 持ち越さないようNode token全体を既存Node ID参照へ置換します。
+      const to = sourceLine.start + (syntaxRange?.[1] ?? idRange[1]);
+      return `${source.slice(0, from)}${nextNodeId}${source.slice(to)}`;
+    }
+    currentEdgeIndex += 1;
+  }
+
+  return null;
+}
+
+/**
  * Visual editorのmodelから、安定した形式のMermaid sourceを生成します。
  *
  * @param model - SerializeするFlowchart。
