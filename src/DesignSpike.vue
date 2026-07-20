@@ -4,141 +4,152 @@ import { computed, onMounted, reactive, ref } from "vue";
 import PrototypeDemo, {
   type PrototypeKind,
 } from "./components/PrototypeDemo.vue";
+import {
+  createDecisionState,
+  flattenDecisionTopics,
+  serializeDecisionGroups,
+  type DecisionGroup,
+} from "./spike/decision-spike";
 
-type TopicId = "fullscreen" | "zoom" | "pan" | "edgeReconnect" | "tooltipPlacement";
+const baselineDecisions = [
+  { topic: "fullscreen.default", label: "Browser fullscreen", id: "native-with-fallback" },
+  { topic: "zoom", label: "WheelでPan", id: "document-like" },
+  { topic: "pan", label: "背景をDrag", id: "background-drag" },
+  { topic: "tooltipPlacement", label: "Node近傍へ表示", id: "adaptive-floating" },
+] as const;
 
-interface SpikeOption {
-  id: string;
-  label: string;
-  summary: string;
-  prototype: PrototypeKind;
-  recommended?: boolean;
-}
-
-interface SpikeTopic {
-  id: TopicId;
-  title: string;
-  question: string;
-  options: readonly SpikeOption[];
-}
-
-const topics: readonly SpikeTopic[] = [
+const groups: readonly DecisionGroup<PrototypeKind>[] = [
   {
-    id: "fullscreen",
-    title: "Fullscreen",
-    question: "図を大きく見るとき、どこまで画面を占有するか",
-    options: [
+    id: "fullscreen.presentation",
+    title: "Fullscreenの見分け方",
+    summary: "Browser fullscreenをdefaultとし、Page fullscreenとの違いをButtonで伝えます。",
+    topics: [
       {
-        id: "native-with-fallback",
-        label: "Browser fullscreen",
-        summary: "対応時はFullscreen API、失敗時はPage内拡大",
-        prototype: "fullscreen-native",
-        recommended: true,
-      },
-      {
-        id: "in-app-only",
-        label: "Page内で拡大",
-        summary: "Browser UIを残し、PreviewだけをViewportへ広げる",
-        prototype: "fullscreen-app",
+        id: "fullscreen.buttonAppearance",
+        title: "Button appearance",
+        question: "二つのFullscreen modeをどの見た目で区別するか",
+        options: [
+          {
+            id: "stateful-single",
+            label: "状態で変わる単一Button",
+            summary: "選択中のModeに合わせてIconとColorを変更",
+            prototype: "fullscreen-button-stateful",
+          },
+          {
+            id: "explicit-dual",
+            label: "二つを常時表示",
+            summary: "BrowserとPageをSegmented controlで並べる",
+            prototype: "fullscreen-button-dual",
+            recommended: true,
+          },
+          {
+            id: "primary-with-menu",
+            label: "Primary + Menu",
+            summary: "Browserを主Button、PageをMenu内に配置",
+            prototype: "fullscreen-button-menu",
+          },
+        ],
       },
     ],
   },
   {
-    id: "zoom",
-    title: "Zoom",
-    question: "WheelとTrackpadをZoomへどう割り当てるか",
-    options: [
+    id: "fullscreen.guidance",
+    title: "Fullscreenの初回案内",
+    summary: "Browserが表示する上部通知の正確な範囲は取得できないため、重なりにくい位置を比較します。",
+    topics: [
       {
-        id: "wheel-zooms",
-        label: "WheelでZoom",
-        summary: "Mapのように、Wheelだけで拡大と縮小",
-        prototype: "zoom-wheel",
+        id: "fullscreen.guidanceTrigger",
+        title: "案内を出すTrigger",
+        question: "DefaultがBrowser fullscreenであることを、いつ説明するか",
+        options: [
+          {
+            id: "delayed-hover",
+            label: "一定時間Hover",
+            summary: "700ms留まった場合だけ表示",
+            prototype: "guidance-hover",
+          },
+          {
+            id: "first-activation",
+            label: "初回Click",
+            summary: "最初にFullscreenを使った瞬間だけ表示",
+            prototype: "guidance-first-use",
+          },
+          {
+            id: "hover-and-first-use",
+            label: "Hover + 初回Click",
+            summary: "事前説明と見逃し防止を両立",
+            prototype: "guidance-both",
+            recommended: true,
+          },
+        ],
       },
       {
-        id: "document-like",
-        label: "WheelでPan",
-        summary: "通常WheelはPan、CtrlまたはCommand付きでZoom",
-        prototype: "zoom-document",
-        recommended: true,
+        id: "fullscreen.guidancePlacement",
+        title: "案内を出す場所",
+        question: "Browserの上部通知と競合しにくく、視線から外れない場所はどこか",
+        options: [
+          {
+            id: "anchored-popover",
+            label: "Button直下",
+            summary: "操作元との関係が明確",
+            prototype: "guidance-anchored",
+          },
+          {
+            id: "safe-top-banner",
+            label: "上部Banner",
+            summary: "Browser通知を避ける余白を取って表示",
+            prototype: "guidance-top",
+          },
+          {
+            id: "bottom-toast",
+            label: "下部Toast",
+            summary: "Browser上部通知との重なりを避ける",
+            prototype: "guidance-bottom",
+            recommended: true,
+          },
+        ],
       },
     ],
   },
   {
-    id: "pan",
-    title: "Pan",
-    question: "図を平行移動するとき、Dragをどう開始するか",
-    options: [
+    id: "edge.reconnect",
+    title: "Edge reconnectの再比較",
+    summary: "BとCの間で接続先が実際に変わるPrototypeへ修正しました。",
+    topics: [
       {
-        id: "background-drag",
-        label: "背景をDrag",
-        summary: "空いている場所を掴んで、そのまま移動",
-        prototype: "pan-background",
-        recommended: true,
-      },
-      {
-        id: "space-or-middle",
-        label: "Space + Drag",
-        summary: "明示的にPan modeへ入り、誤操作を避ける",
-        prototype: "pan-space",
-      },
-    ],
-  },
-  {
-    id: "edgeReconnect",
-    title: "Edge reconnect",
-    question: "Edgeのどちら側を変更するか、どう指定するか",
-    options: [
-      {
-        id: "nearest-endpoint",
-        label: "線を直接Drag",
-        summary: "掴んだ位置に近いEndpointを自動選択",
-        prototype: "edge-nearest",
-      },
-      {
-        id: "explicit-handles",
-        label: "Endpoint handle",
-        summary: "Edge選択後、変更する端のHandleをDrag",
-        prototype: "edge-handles",
-        recommended: true,
-      },
-    ],
-  },
-  {
-    id: "tooltipPlacement",
-    title: "Node annotation tooltip",
-    question: "Nodeと重ならずに説明をどこへ表示するか",
-    options: [
-      {
-        id: "adaptive-floating",
-        label: "Node近傍へ表示",
-        summary: "空いている方向を選び、Nodeとの距離を維持",
-        prototype: "tooltip-floating",
-        recommended: true,
-      },
-      {
-        id: "fixed-detail-panel",
-        label: "固定Detail panel",
-        summary: "Preview下部へ常に同じ位置で表示",
-        prototype: "tooltip-panel",
+        id: "edgeReconnect.behavior",
+        title: "Endpointの指定",
+        question: "Edgeを掴む操作と正確なFallbackをどう組み合わせるか",
+        options: [
+          {
+            id: "nearest-endpoint",
+            label: "線を直接Drag",
+            summary: "掴んだ位置に近いEndpointを自動選択",
+            prototype: "edge-nearest",
+          },
+          {
+            id: "explicit-handles",
+            label: "Endpoint handle",
+            summary: "変更する端をHandleで明示",
+            prototype: "edge-handles",
+          },
+          {
+            id: "handles-with-toolbar",
+            label: "Handle + Toolbar",
+            summary: "Dragに加えてSelectでも接続先を変更",
+            prototype: "edge-handle-toolbar",
+            recommended: true,
+          },
+        ],
       },
     ],
   },
 ];
 
-const selections = reactive<Record<TopicId, string | null>>({
-  fullscreen: null,
-  zoom: null,
-  pan: null,
-  edgeReconnect: null,
-  tooltipPlacement: null,
-});
-const notes = reactive<Record<TopicId, string>>({
-  fullscreen: "",
-  zoom: "",
-  pan: "",
-  edgeReconnect: "",
-  tooltipPlacement: "",
-});
+const topics = flattenDecisionTopics(groups);
+const initialState = createDecisionState(groups);
+const selections = reactive(initialState.selections);
+const notes = reactive(initialState.notes);
 const copyIcon = ref<HTMLSpanElement | null>(null);
 const copied = ref(false);
 const copyFailed = ref(false);
@@ -149,22 +160,10 @@ const completedCount = computed(
 const decisionJson = computed(() =>
   JSON.stringify(
     {
-      schema: "mermaid-editor.interaction-decisions/v1",
+      schema: "mermaid-editor.interaction-decisions/v2",
       generatedAt: new Date().toISOString(),
-      decisions: topics.map((topic) => {
-        const selectedId = selections[topic.id];
-        const selected = topic.options.find((option) => option.id === selectedId);
-        return {
-          topic: topic.id,
-          selectedOption: selected
-            ? {
-                id: selected.id,
-                label: selected.label,
-              }
-            : null,
-          note: notes[topic.id].trim() || null,
-        };
-      }),
+      baselineDecisions,
+      decisionGroups: serializeDecisionGroups(groups, { selections, notes }),
     },
     null,
     2,
@@ -235,8 +234,8 @@ async function writeClipboard(text: string): Promise<void> {
     <header class="spike-header">
       <div>
         <p class="spike-eyebrow">Interaction Decision Spike</p>
-        <h1>触って決める、図の操作仕様</h1>
-        <p>各案を試して採用候補を選び、必要なら補足を書いてください。</p>
+        <h1>FullscreenとEdgeを、もう一段決める</h1>
+        <p>前回の決定を固定し、未決の部分だけを階層化して比較します。</p>
       </div>
       <a href="/" class="spike-back">
         Editorへ戻る
@@ -249,55 +248,78 @@ async function writeClipboard(text: string): Promise<void> {
       <button type="button" @click="chooseRecommended">推奨案をまとめて選択</button>
     </div>
 
-    <section
-      v-for="(topic, topicIndex) in topics"
-      :key="topic.id"
-      class="spike-topic"
-      :aria-labelledby="`${topic.id}-title`"
-    >
-      <div class="spike-topic-heading">
-        <span>{{ topicIndex + 1 }}</span>
+    <section class="spike-baseline" aria-labelledby="baseline-title">
+      <div>
+        <p class="spike-eyebrow">Accepted baseline</p>
+        <h2 id="baseline-title">前回採用した仕様</h2>
+      </div>
+      <div class="spike-baseline-list">
+        <span v-for="decision in baselineDecisions" :key="decision.topic">
+          <small>{{ decision.topic }}</small>
+          {{ decision.label }}
+        </span>
+      </div>
+    </section>
+
+    <section v-for="(group, groupIndex) in groups" :key="group.id" class="spike-group">
+      <div class="spike-group-heading">
+        <span>{{ groupIndex + 1 }}</span>
         <div>
-          <h2 :id="`${topic.id}-title`">{{ topic.title }}</h2>
-          <p>{{ topic.question }}</p>
+          <p class="spike-eyebrow">{{ group.id }}</p>
+          <h2>{{ group.title }}</h2>
+          <p>{{ group.summary }}</p>
         </div>
       </div>
 
-      <div class="spike-options">
-        <article
-          v-for="option in topic.options"
-          :key="option.id"
-          class="spike-option"
-          :class="{ 'is-selected': selections[topic.id] === option.id }"
-        >
-          <label class="spike-option-choice">
-            <input
-              v-model="selections[topic.id]"
-              type="radio"
-              :name="topic.id"
-              :value="option.id"
-            />
-            <span class="spike-radio" aria-hidden="true" />
-            <span class="spike-option-copy">
-              <span>
-                <strong>{{ option.label }}</strong>
-                <small v-if="option.recommended">推奨</small>
-              </span>
-              <span>{{ option.summary }}</span>
-            </span>
-          </label>
-          <PrototypeDemo :kind="option.prototype" />
-        </article>
-      </div>
+      <section
+        v-for="topic in group.topics"
+        :key="topic.id"
+        class="spike-topic"
+        :aria-labelledby="`${topic.id}-title`"
+      >
+        <div class="spike-topic-heading">
+          <div>
+            <h3 :id="`${topic.id}-title`">{{ topic.title }}</h3>
+            <p>{{ topic.question }}</p>
+          </div>
+        </div>
 
-      <label class="spike-note">
-        <span>別案、条件、気になったこと</span>
-        <textarea
-          v-model="notes[topic.id]"
-          rows="2"
-          placeholder="例：Touchでは別の挙動にしたい"
-        />
-      </label>
+        <div class="spike-options" :style="{ '--option-count': Math.min(topic.options.length, 3) }">
+          <article
+            v-for="option in topic.options"
+            :key="option.id"
+            class="spike-option"
+            :class="{ 'is-selected': selections[topic.id] === option.id }"
+          >
+            <label class="spike-option-choice">
+              <input
+                v-model="selections[topic.id]"
+                type="radio"
+                :name="topic.id"
+                :value="option.id"
+              />
+              <span class="spike-radio" aria-hidden="true" />
+              <span class="spike-option-copy">
+                <span>
+                  <strong>{{ option.label }}</strong>
+                  <small v-if="option.recommended">推奨</small>
+                </span>
+                <span>{{ option.summary }}</span>
+              </span>
+            </label>
+            <PrototypeDemo :kind="option.prototype" />
+          </article>
+        </div>
+
+        <label class="spike-note">
+          <span>別案、条件、気になったこと</span>
+          <textarea
+            v-model="notes[topic.id]"
+            rows="2"
+            placeholder="例：Touchでは別の挙動にしたい"
+          />
+        </label>
+      </section>
     </section>
 
     <section class="spike-output">
@@ -392,7 +414,8 @@ async function writeClipboard(text: string): Promise<void> {
   backdrop-filter: blur(20px) saturate(180%);
 }
 
-.spike-topic,
+.spike-group,
+.spike-baseline,
 .spike-output {
   margin-top: 1rem;
   padding: 1.15rem;
@@ -403,14 +426,48 @@ async function writeClipboard(text: string): Promise<void> {
   backdrop-filter: blur(22px) saturate(170%);
 }
 
-.spike-topic-heading {
+.spike-baseline {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.spike-baseline h2,
+.spike-group-heading h2 {
+  margin: 0;
+  color: #1d1d1f;
+  font-size: 1rem;
+}
+
+.spike-baseline-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.spike-baseline-list > span {
+  display: grid;
+  gap: 0.1rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid rgb(36 138 61 / 16%);
+  border-radius: 0.65rem;
+  background: rgb(236 253 240 / 70%);
+  color: #1d1d1f;
+  font-size: 0.6875rem;
+  font-weight: 650;
+}
+
+.spike-baseline-list small {
+  color: #248a3d;
+  font-size: 0.525rem;
+}
+
+.spike-group-heading {
   display: flex;
   gap: 0.75rem;
   align-items: flex-start;
-  margin-bottom: 1rem;
 }
 
-.spike-topic-heading > span {
+.spike-group-heading > span {
   display: grid;
   width: 1.65rem;
   height: 1.65rem;
@@ -423,10 +480,34 @@ async function writeClipboard(text: string): Promise<void> {
   font-weight: 750;
 }
 
-.spike-topic-heading h2 {
+.spike-group-heading .spike-eyebrow {
+  margin-bottom: 0.2rem;
+}
+
+.spike-group-heading p:last-child {
+  margin: 0.3rem 0 0;
+  color: #6e6e73;
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.spike-topic {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgb(118 118 128 / 12%);
+}
+
+.spike-topic-heading {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+}
+
+.spike-topic-heading h3 {
   margin: 0;
   color: #1d1d1f;
-  font-size: 1rem;
+  font-size: 0.875rem;
   letter-spacing: -0.015em;
 }
 
@@ -437,8 +518,9 @@ async function writeClipboard(text: string): Promise<void> {
 }
 
 .spike-options {
+  --option-count: 2;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--option-count), minmax(0, 1fr));
   gap: 0.75rem;
 }
 
@@ -614,14 +696,17 @@ async function writeClipboard(text: string): Promise<void> {
 
 @media (prefers-color-scheme: dark) {
   .spike-header h1,
-  .spike-topic-heading h2,
+  .spike-topic-heading h3,
+  .spike-group-heading h2,
+  .spike-baseline h2,
   .spike-option-copy strong,
   .spike-output h2 {
     color: #f5f5f7;
   }
 
   .spike-progress,
-  .spike-topic,
+  .spike-group,
+  .spike-baseline,
   .spike-output,
   .spike-option,
   .spike-note textarea {
@@ -633,6 +718,12 @@ async function writeClipboard(text: string): Promise<void> {
   .spike-option.is-selected {
     border-color: rgb(10 132 255 / 65%);
     background: rgb(10 70 125 / 34%);
+  }
+
+  .spike-baseline-list > span {
+    border-color: rgb(48 209 88 / 20%);
+    background: rgb(20 83 45 / 34%);
+    color: #f5f5f7;
   }
 }
 
