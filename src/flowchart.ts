@@ -4,28 +4,34 @@ export type NodeShape = "rectangle" | "rounded" | "terminal" | "decision" | "cir
 export interface NodeSemantics {
   shortLabel: string;
   accessibleDescription: string;
+  detailDescription: string;
 }
 
 export const NODE_SHAPE_SEMANTICS: Record<NodeShape, NodeSemantics> = {
   rectangle: {
     shortLabel: "処理",
     accessibleDescription: "一般的には処理を表す形",
+    detailDescription: "実行する作業や処理の内容を表すときに使われます。",
   },
   rounded: {
     shortLabel: "イベント",
     accessibleDescription: "一般的にはイベントを表す形",
+    detailDescription: "工程で起きる出来事や状態の変化を表すときに使われます。",
   },
   terminal: {
     shortLabel: "開始・終了",
     accessibleDescription: "一般的には開始または終了を表す形",
+    detailDescription: "フローの開始地点または終了地点を表すときに使われます。",
   },
   decision: {
     shortLabel: "判断",
     accessibleDescription: "一般的には判断を表す形",
+    detailDescription: "条件を確認し、結果によって流れが分かれる地点を表します。",
   },
   circle: {
     shortLabel: "開始点",
     accessibleDescription: "一般的には開始点を表す形",
+    detailDescription: "フローの開始点や、別の場所へつながる接続点として使われます。",
   },
 };
 
