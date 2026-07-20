@@ -27,72 +27,78 @@ const baselineDecisions = [
   { topic: "pan", label: "背景をDrag", id: "background-drag" },
   { topic: "tooltipPlacement", label: "Node近傍へ表示", id: "adaptive-floating" },
   { topic: "edgeReconnect.behavior", label: "Endpoint handle", id: "explicit-handles" },
+  { topic: "fullscreen.iconPair", label: "Frame / Scan", id: "fullscreen-scan" },
+  {
+    topic: "edgeReconnect.emphasis",
+    label: "Scale + Outline",
+    id: "scale-and-outline",
+  },
 ] as const;
 
 const groups: readonly DecisionGroup<PrototypeKind>[] = [
   {
-    id: "fullscreen.icon",
-    title: "Fullscreen modeをIconで見分ける",
+    id: "history.preview.surface",
+    title: "Undo / Redo後の図をどこにPreviewするか",
     summary:
-      "Text labelを常時表示せず、Lucide由来のshape変化でBrowserとPageの現在状態を伝えます。",
+      "Undo / Redo buttonをHoverまたはKeyboard focusした間だけ、操作を確定せず次の状態を比較します。",
     topics: [
       {
-        id: "fullscreen.iconPair",
-        title: "Icon pair",
-        question: "同じButtonの中で、Browser modeとPage modeをどのIconで対にするか",
+        id: "history.preview.surface",
+        title: "Preview surface",
+        question: "履歴の前後差分を、現在の図との関係が最も分かりやすい形でどこに出すか",
         options: [
           {
-            id: "maximize-minimize",
-            label: "Corners outward / inward",
-            summary: "Maximize2とMinimize2。方向の反転が最も強い",
-            prototype: "fullscreen-icon-corners",
+            id: "miniature-tooltip",
+            label: "Miniature tooltip",
+            summary: "Button近くのTooltipに、Undo / Redo後の図全体を縮小表示",
+            prototype: "history-preview-miniature",
           },
           {
-            id: "fullscreen-scan",
-            label: "Frame / Scan",
-            summary: "FullscreenとScan。外枠とfocus領域でscopeを表す",
-            prototype: "fullscreen-icon-frame",
+            id: "replace-real-preview",
+            label: "Replace real preview",
+            summary: "Hover中だけ、実際のPreviewをUndo / Redo後の完成形に置換",
+            prototype: "history-preview-replace",
+          },
+          {
+            id: "overlay-changes",
+            label: "Overlay changed parts",
+            summary: "現在の図を保ち、追加・削除・変更される部分だけを重ねる",
+            prototype: "history-preview-overlay",
             recommended: true,
-          },
-          {
-            id: "maximize-focus",
-            label: "Expand / Focus",
-            summary: "Maximize2とFocus。Page内の対象領域という意味を強める",
-            prototype: "fullscreen-icon-focus",
           },
         ],
       },
     ],
   },
   {
-    id: "edge.emphasis",
-    title: "接続変更をNodeのmotionで伝える",
+    id: "history.preview.text",
+    title: "Text変更をどう表すか",
     summary:
-      "EndpointをDragしている間とsnap直後に、接続を失うNodeと得るNodeを異なるfeedbackで示します。",
+      "Nodeの形状差分とは独立して、変更前と変更後の文字を読み比べられる表現を決めます。",
     topics: [
       {
-        id: "edgeReconnect.emphasis",
-        title: "Losing / gaining feedback",
-        question: "接続変更の方向を、どの視覚変化で最も自然に理解できるか",
+        id: "history.preview.textChange",
+        title: "Text change representation",
+        question: "Node labelが変わる履歴で、変更前後の文字をどのように見せるか",
         options: [
           {
-            id: "scale-only",
-            label: "Scale",
-            summary: "失うNodeを縮小し、得るNodeを拡大",
-            prototype: "edge-emphasis-scale",
-          },
-          {
-            id: "outline-only",
-            label: "Outline",
-            summary: "失う側を破線、得る側を強いoutlineで表示",
-            prototype: "edge-emphasis-outline",
-          },
-          {
-            id: "scale-and-outline",
-            label: "Scale + Outline",
-            summary: "方向をmotionとshapeの両方で伝える",
-            prototype: "edge-emphasis-combined",
+            id: "strike-and-screen-top",
+            label: "Strike + screen top",
+            summary: "変更前へ取消線を引き、変更後をNodeではなくPreview画面の上側へ表示",
+            prototype: "history-text-above",
             recommended: true,
+          },
+          {
+            id: "inline-before-after",
+            label: "Inline before → after",
+            summary: "Node内で変更前と変更後を横並びにし、方向を明示",
+            prototype: "history-text-inline",
+          },
+          {
+            id: "replacement-label",
+            label: "Replacement label",
+            summary: "変更後の文字へ置換し、色とChanged badgeで差分を示す",
+            prototype: "history-text-replacement",
           },
         ],
       },
@@ -188,8 +194,8 @@ async function writeClipboard(text: string): Promise<void> {
     <header class="spike-header">
       <div>
         <p class="spike-eyebrow">Interaction Decision Spike</p>
-        <h1>Iconと接続変更のfeedbackを決める</h1>
-        <p>採用済みの挙動を固定し、見た目とmotionだけを触って比較します。</p>
+        <h1>Undo / RedoのPreview方法を決める</h1>
+        <p>履歴を確定する前に、図とTextがどう変わるかをHoverで比較します。</p>
       </div>
       <a href="/" class="spike-back">
         Editorへ戻る
@@ -204,8 +210,8 @@ async function writeClipboard(text: string): Promise<void> {
 
     <section class="spike-baseline" aria-labelledby="baseline-title">
       <div>
-        <p class="spike-eyebrow">Accepted baseline</p>
-        <h2 id="baseline-title">前回採用した仕様</h2>
+        <p class="spike-eyebrow">Accepted product decisions</p>
+        <h2 id="baseline-title">採用済みの仕様（実装状況とは別）</h2>
       </div>
       <div class="spike-baseline-list">
         <span v-for="decision in baselineDecisions" :key="decision.topic">

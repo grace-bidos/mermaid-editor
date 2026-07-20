@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Focus, Fullscreen, Maximize2, Minimize2, Scan } from "lucide";
+import { Focus, Fullscreen, Maximize2, Minimize2, Redo2, Scan, Undo2 } from "lucide";
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import LucideGlyph from "./LucideGlyph";
 
@@ -29,7 +29,13 @@ export type PrototypeKind =
   | "edge-emphasis-outline"
   | "edge-emphasis-combined"
   | "tooltip-floating"
-  | "tooltip-panel";
+  | "tooltip-panel"
+  | "history-preview-miniature"
+  | "history-preview-replace"
+  | "history-preview-overlay"
+  | "history-text-above"
+  | "history-text-inline"
+  | "history-text-replacement";
 
 const props = defineProps<{ kind: PrototypeKind }>();
 
@@ -45,6 +51,7 @@ const modeMenuOpen = ref(false);
 const isSpacePressed = ref(false);
 const tooltipOpen = ref(false);
 const tooltipNodeY = ref(42);
+const historyDirection = ref<"undo" | "redo" | null>(null);
 const edgeStartX = ref(62);
 const edgeStartY = ref(75);
 const edgeEndX = ref(178);
@@ -63,6 +70,8 @@ const isViewportDemo = computed(() =>
 const isEdgeDemo = computed(() => props.kind.startsWith("edge-"));
 const isTooltipDemo = computed(() => props.kind.startsWith("tooltip-"));
 const isFullscreenButtonDemo = computed(() => props.kind.startsWith("fullscreen-button-"));
+const isHistoryDemo = computed(() => props.kind.startsWith("history-"));
+const isHistoryTextDemo = computed(() => props.kind.startsWith("history-text-"));
 const isFullscreenIconDemo = computed(() => props.kind.startsWith("fullscreen-icon-"));
 const isGuidanceDemo = computed(() => props.kind.startsWith("guidance-"));
 const isEdgeEmphasisDemo = computed(() => props.kind.startsWith("edge-emphasis-"));
@@ -70,6 +79,20 @@ const transform = computed(
   () => `translate(${panX.value}px, ${panY.value}px) scale(${scale.value})`,
 );
 const zoomLabel = computed(() => `${Math.round(scale.value * 100)}%`);
+const historyStatusId = computed(() => `history-preview-status-${props.kind}`);
+const historyAnnouncement = computed(() => {
+  if (historyDirection.value === "undo") {
+    return isHistoryTextDemo.value
+      ? "Undo preview。BuildがDraftへ変わります。"
+      : "Undo preview。BとBへの接続が削除され、Aだけになります。";
+  }
+  if (historyDirection.value === "redo") {
+    return isHistoryTextDemo.value
+      ? "Redo preview。BuildがShipへ変わります。"
+      : "Redo preview。CとCへの接続が追加され、AからB、Cへ続きます。";
+  }
+  return "UndoまたはRedoへフォーカスすると、変更後の状態をプレビューします。";
+});
 const tooltipBelow = computed(() => tooltipNodeY.value < 66);
 const edgeCandidateY = computed(() =>
   Math.abs(edgeEndY.value - 45) <= Math.abs(edgeEndY.value - 110) ? 45 : 110,
@@ -291,6 +314,14 @@ function resetViewport(): void {
   panY.value = 0;
 }
 
+function showHistory(direction: "undo" | "redo"): void {
+  historyDirection.value = direction;
+}
+
+function hideHistory(direction: "undo" | "redo"): void {
+  if (historyDirection.value === direction) historyDirection.value = null;
+}
+
 function syncFullscreenState(): void {
   isNativeFullscreen.value = document.fullscreenElement === canvas.value;
 }
@@ -320,7 +351,112 @@ function clamp(value: number, minimum: number, maximum: number): number {
     @keyup="handleKey($event, false)"
     @blur="isSpacePressed = false"
   >
-    <template v-if="isFullscreenIconDemo">
+    <template v-if="isHistoryDemo">
+      <div class="history-toolbar" aria-label="履歴操作">
+        <button
+          type="button"
+          aria-label="元に戻す"
+          :aria-describedby="historyStatusId"
+          @pointerenter="showHistory('undo')"
+          @pointerleave="hideHistory('undo')"
+          @focus="showHistory('undo')"
+          @blur="hideHistory('undo')"
+        >
+          <LucideGlyph :icon="Undo2" :size="17" />
+        </button>
+        <button
+          type="button"
+          aria-label="やり直す"
+          :aria-describedby="historyStatusId"
+          @pointerenter="showHistory('redo')"
+          @pointerleave="hideHistory('redo')"
+          @focus="showHistory('redo')"
+          @blur="hideHistory('redo')"
+        >
+          <LucideGlyph :icon="Redo2" :size="17" />
+        </button>
+      </div>
+      <span :id="historyStatusId" class="history-sr-status" aria-live="polite">
+        {{ historyAnnouncement }}
+      </span>
+
+      <div class="history-scene">
+        <div class="history-node history-node-a">Plan</div>
+        <span
+          class="history-edge history-edge-first"
+          :class="{
+            'is-hidden-by-preview': kind === 'history-preview-replace' && historyDirection === 'undo',
+            'is-removed': kind === 'history-preview-overlay' && historyDirection === 'undo',
+          }"
+        >→</span>
+        <div
+          class="history-node history-node-b"
+          :class="{
+            'is-hidden-by-preview': kind === 'history-preview-replace' && historyDirection === 'undo',
+            'is-removed': kind === 'history-preview-overlay' && historyDirection === 'undo',
+          }"
+        >
+          <template v-if="isHistoryTextDemo && historyDirection">
+            <template v-if="kind === 'history-text-above'">
+              <span class="history-old-text">Build</span>
+            </template>
+            <template v-else-if="kind === 'history-text-inline'">
+              <span class="history-inline-old">Build</span>
+              <span class="history-inline-arrow">→</span>
+              <span class="history-inline-new">{{ historyDirection === "undo" ? "Draft" : "Ship" }}</span>
+            </template>
+            <template v-else>
+              {{ historyDirection === "undo" ? "Draft" : "Ship" }}
+              <small class="history-changed-badge">Changed</small>
+            </template>
+          </template>
+          <template v-else>Build</template>
+        </div>
+        <template v-if="!isHistoryTextDemo">
+          <span
+            v-if="historyDirection === 'redo' && kind !== 'history-preview-miniature'"
+            class="history-edge history-edge-second"
+            :class="{ 'is-added': kind === 'history-preview-overlay' }"
+          >→</span>
+          <div
+            v-if="historyDirection === 'redo' && kind !== 'history-preview-miniature'"
+            class="history-node history-node-c"
+            :class="{ 'is-added': kind === 'history-preview-overlay' }"
+          >Review</div>
+        </template>
+      </div>
+      <span
+        v-if="kind === 'history-text-above' && historyDirection"
+        class="history-new-text"
+      >{{ historyDirection === "undo" ? "Draft" : "Ship" }}</span>
+
+      <div
+        v-if="kind === 'history-preview-miniature' && historyDirection"
+        class="history-miniature"
+      >
+        <strong>{{ historyDirection === "undo" ? "Undo" : "Redo" }} preview</strong>
+        <div>
+          <span>Plan</span>
+          <b v-if="historyDirection === 'redo'">→</b>
+          <span v-if="historyDirection === 'redo'">Build</span>
+          <b v-if="historyDirection === 'redo'">→</b>
+          <span v-if="historyDirection === 'redo'">Review</span>
+        </div>
+      </div>
+      <div
+        v-if="kind === 'history-preview-replace' && historyDirection"
+        class="history-replace-label"
+      >{{ historyDirection === "undo" ? "Undo後の完成形" : "Redo後の完成形" }}</div>
+      <div
+        v-if="kind === 'history-preview-overlay' && historyDirection"
+        class="history-overlay-legend"
+        :class="historyDirection === 'undo' ? 'is-removal' : 'is-addition'"
+      ><span>{{ historyDirection === "undo" ? "削除" : "追加" }}</span>される部分</div>
+
+      <p class="prototype-hint">Undo / RedoへHoverまたはFocusしてPreview</p>
+    </template>
+
+    <template v-else-if="isFullscreenIconDemo">
       <div class="prototype-fullscreen-content">
         <span class="prototype-node">Idea</span>
         <span class="prototype-arrow">→</span>
@@ -658,6 +794,193 @@ function clamp(value: number, minimum: number, maximum: number): number {
   background: rgb(0 122 255 / 10%);
   color: #007aff;
   cursor: pointer;
+}
+
+.history-toolbar {
+  position: absolute;
+  z-index: 8;
+  top: 0.65rem;
+  left: 0.65rem;
+  display: flex;
+  gap: 0.2rem;
+  padding: 0.2rem;
+  border: 1px solid rgb(118 118 128 / 16%);
+  border-radius: 0.65rem;
+  background: rgb(255 255 255 / 90%);
+  box-shadow: 0 5px 16px rgb(0 0 0 / 8%);
+}
+
+.history-toolbar button {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border: 0;
+  border-radius: 0.48rem;
+  background: transparent;
+  color: #3a3a3c;
+  cursor: pointer;
+}
+
+.history-toolbar button:hover,
+.history-toolbar button:focus-visible {
+  background: rgb(0 122 255 / 11%);
+  color: #007aff;
+  outline: none;
+}
+
+.history-sr-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.history-scene {
+  position: absolute;
+  top: 54%;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  transform: translate(-50%, -50%);
+}
+
+.history-node {
+  position: relative;
+  display: grid;
+  min-width: 3.7rem;
+  min-height: 2.35rem;
+  place-items: center;
+  padding: 0 0.35rem;
+  border: 1px solid rgb(0 122 255 / 28%);
+  border-radius: 0.65rem;
+  background: white;
+  color: #1d1d1f;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 7%);
+  font-size: 0.67rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.history-edge {
+  color: #8e8e93;
+}
+
+.history-scene .is-hidden-by-preview {
+  display: none;
+}
+
+[data-kind="history-preview-overlay"] .history-node-b.is-removed {
+  border: 2px dashed #ff453a;
+  background: rgb(255 69 58 / 8%);
+  color: #c9342c;
+  opacity: 0.72;
+}
+
+[data-kind="history-preview-overlay"] .history-node-c.is-added {
+  border: 2px solid #34c759;
+  background: rgb(52 199 89 / 10%);
+  color: #208a3c;
+}
+
+[data-kind="history-preview-overlay"] .history-edge.is-added {
+  color: #34c759;
+}
+
+[data-kind="history-preview-overlay"] .history-edge.is-removed {
+  color: #ff453a;
+  opacity: 0.72;
+}
+
+.history-miniature {
+  position: absolute;
+  z-index: 9;
+  top: 3.25rem;
+  left: 0.65rem;
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: 0.65rem;
+  background: rgb(29 29 31 / 92%);
+  color: white;
+  box-shadow: 0 8px 22px rgb(0 0 0 / 18%);
+  font-size: 0.55rem;
+}
+
+.history-miniature div {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.history-miniature span {
+  padding: 0.22rem 0.3rem;
+  border: 1px solid rgb(255 255 255 / 38%);
+  border-radius: 0.25rem;
+}
+
+.history-replace-label,
+.history-overlay-legend {
+  position: absolute;
+  top: 0.8rem;
+  right: 0.7rem;
+  color: #636366;
+  font-size: 0.58rem;
+  font-weight: 650;
+}
+
+.history-overlay-legend span {
+  color: inherit;
+}
+
+.history-overlay-legend.is-removal {
+  color: #ff453a;
+}
+
+.history-overlay-legend.is-addition {
+  color: #208a3c;
+}
+
+.history-old-text,
+.history-inline-old {
+  color: #8e8e93;
+  text-decoration: line-through;
+}
+
+.history-new-text {
+  position: absolute;
+  z-index: 6;
+  top: 0.8rem;
+  left: 50%;
+  padding: 0.25rem 0.42rem;
+  border-radius: 0.4rem;
+  background: #007aff;
+  color: white;
+  transform: translateX(-50%);
+}
+
+.history-inline-arrow {
+  padding: 0 0.18rem;
+  color: #8e8e93;
+}
+
+.history-inline-new {
+  color: #007aff;
+}
+
+.history-changed-badge {
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  left: 50%;
+  padding: 0.14rem 0.28rem;
+  border-radius: 999px;
+  background: rgb(0 122 255 / 11%);
+  color: #007aff;
+  font-size: 0.46rem;
+  transform: translateX(-50%);
 }
 
 .fullscreen-button-stage {
