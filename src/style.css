@@ -248,6 +248,31 @@ select {
   color: #ff3b30;
 }
 
+.preview {
+  cursor: grab;
+  /*
+   * Touchの既定scroll/zoomを止め、Pointer Eventsで1:1の背景Dragを扱います。
+   * NodeやEndpoint handleは個別のcursorとinteractionを引き続き優先します。
+   */
+  touch-action: none;
+  overscroll-behavior: contain;
+}
+
+.preview:focus-visible {
+  outline: 3px solid rgb(0 122 255 / 28%);
+  outline-offset: -3px;
+}
+
+.preview.is-viewport-panning {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.preview > svg {
+  flex: none;
+  will-change: transform;
+}
+
 .preview .visual-editable {
   cursor: pointer;
   outline: none;

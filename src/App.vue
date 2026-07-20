@@ -18,6 +18,10 @@ import {
   type PreviewStatus,
 } from "./preview";
 import { createSplitPane } from "./split-pane";
+import {
+  createViewportController,
+  type ViewportController,
+} from "./viewport-controller";
 
 const persistence = createEditorPersistence(localStorage);
 const source = ref(persistence.loadDocument());
@@ -28,6 +32,7 @@ const workspaceComponent = useTemplateRef("workspaceComponent");
 
 let nodeInteraction: NodeInteractionController | null = null;
 let previewController: PreviewController | null = null;
+let viewportController: ViewportController | null = null;
 let disposeSplitPane: (() => void) | null = null;
 const disposeListeners: Array<() => void> = [];
 
@@ -41,6 +46,7 @@ onMounted(() => {
   const workspace = requireElement<HTMLElement>("#workspace");
   const splitter = requireElement<HTMLElement>("#splitter");
   const preview = requireElement<HTMLDivElement>("#preview");
+  const viewportStatus = requireElement<HTMLElement>("#viewport-status");
   const errorPanel = requireElement<HTMLDivElement>("#error-panel");
   const downloadButton = requireElement<HTMLButtonElement>("#download-button");
   const visualControls = requireElement<HTMLDivElement>("#visual-controls");
@@ -82,6 +88,8 @@ onMounted(() => {
     setStatus,
   });
 
+  viewportController = createViewportController({ preview, statusElement: viewportStatus });
+
   previewController = createPreviewController({
     previewElement: preview,
     errorElement: errorPanel,
@@ -89,6 +97,7 @@ onMounted(() => {
     onStatusChange: setStatus,
     onRendered: ({ source: renderedSource }) => {
       canDownload.value = true;
+      viewportController?.applyAfterRender();
       nodeInteraction?.configureRendered(renderedSource);
     },
     onEmpty: () => {
@@ -122,6 +131,7 @@ onBeforeUnmount(() => {
   disposeListeners.splice(0).forEach((dispose) => dispose());
   disposeSplitPane?.();
   previewController?.destroy();
+  viewportController?.dispose();
   nodeInteraction?.dispose();
 });
 

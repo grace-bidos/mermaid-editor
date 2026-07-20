@@ -255,8 +255,17 @@ function showFullscreenToast(message: string): void {
       <!-- Mermaidが生成するSVGの所有領域。Vue Templateは内部を管理しない。 -->
       <div
         id="preview"
-        class="preview flex h-full items-center justify-center overflow-auto p-5 sm:p-8"
+        class="preview flex h-full items-center justify-center overflow-hidden p-5 sm:p-8"
+        tabindex="0"
+        role="region"
+        aria-label="Mermaid図のPreview"
+        aria-describedby="viewport-instructions viewport-status"
       />
+      <span id="viewport-instructions" class="sr-only">
+        矢印キーで図を移動します。プラスとマイナスキーで拡大縮小し、0キーで表示をリセットします。
+        Wheelで移動し、ControlまたはCommandキーを押しながらWheelで拡大縮小できます。
+      </span>
+      <span id="viewport-status" class="sr-only" aria-live="polite">表示倍率 100%</span>
 
       <div id="node-toolbar" class="node-toolbar hidden" aria-label="選択したノードの編集">
         <label class="sr-only" for="shape-select">ノードの形</label>
