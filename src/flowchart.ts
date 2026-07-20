@@ -1,6 +1,34 @@
 export type FlowDirection = "TD" | "TB" | "LR" | "RL" | "BT";
 export type NodeShape = "rectangle" | "rounded" | "terminal" | "decision" | "circle";
 
+export interface NodeSemantics {
+  shortLabel: string;
+  accessibleDescription: string;
+}
+
+export const NODE_SHAPE_SEMANTICS: Record<NodeShape, NodeSemantics> = {
+  rectangle: {
+    shortLabel: "処理",
+    accessibleDescription: "一般的には処理を表す形",
+  },
+  rounded: {
+    shortLabel: "イベント",
+    accessibleDescription: "一般的にはイベントを表す形",
+  },
+  terminal: {
+    shortLabel: "開始・終了",
+    accessibleDescription: "一般的には開始または終了を表す形",
+  },
+  decision: {
+    shortLabel: "判断",
+    accessibleDescription: "一般的には判断を表す形",
+  },
+  circle: {
+    shortLabel: "開始点",
+    accessibleDescription: "一般的には開始点を表す形",
+  },
+};
+
 export interface FlowNode {
   id: string;
   label: string;
