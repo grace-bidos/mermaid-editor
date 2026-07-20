@@ -13,131 +13,85 @@ import {
 
 const baselineDecisions = [
   { topic: "fullscreen.default", label: "Browser fullscreen", id: "native-with-fallback" },
+  {
+    topic: "fullscreen.guidanceTrigger",
+    label: "Hover + 初回Click",
+    id: "hover-and-first-use",
+  },
+  {
+    topic: "fullscreen.guidancePlacement",
+    label: "Hoverは空いている側、移行後は下部Toast",
+    id: "adaptive-then-toast",
+  },
   { topic: "zoom", label: "WheelでPan", id: "document-like" },
   { topic: "pan", label: "背景をDrag", id: "background-drag" },
   { topic: "tooltipPlacement", label: "Node近傍へ表示", id: "adaptive-floating" },
+  { topic: "edgeReconnect.behavior", label: "Endpoint handle", id: "explicit-handles" },
 ] as const;
 
 const groups: readonly DecisionGroup<PrototypeKind>[] = [
   {
-    id: "fullscreen.presentation",
-    title: "Fullscreenの見分け方",
-    summary: "Browser fullscreenをdefaultとし、Page fullscreenとの違いをButtonで伝えます。",
+    id: "fullscreen.icon",
+    title: "Fullscreen modeをIconで見分ける",
+    summary:
+      "Text labelを常時表示せず、Lucide由来のshape変化でBrowserとPageの現在状態を伝えます。",
     topics: [
       {
-        id: "fullscreen.buttonAppearance",
-        title: "Button appearance",
-        question: "二つのFullscreen modeをどの見た目で区別するか",
+        id: "fullscreen.iconPair",
+        title: "Icon pair",
+        question: "同じButtonの中で、Browser modeとPage modeをどのIconで対にするか",
         options: [
           {
-            id: "stateful-single",
-            label: "状態で変わる単一Button",
-            summary: "選択中のModeに合わせてIconとColorを変更",
-            prototype: "fullscreen-button-stateful",
+            id: "maximize-minimize",
+            label: "Corners outward / inward",
+            summary: "Maximize2とMinimize2。方向の反転が最も強い",
+            prototype: "fullscreen-icon-corners",
           },
           {
-            id: "explicit-dual",
-            label: "二つを常時表示",
-            summary: "BrowserとPageをSegmented controlで並べる",
-            prototype: "fullscreen-button-dual",
+            id: "fullscreen-scan",
+            label: "Frame / Scan",
+            summary: "FullscreenとScan。外枠とfocus領域でscopeを表す",
+            prototype: "fullscreen-icon-frame",
             recommended: true,
           },
           {
-            id: "primary-with-menu",
-            label: "Primary + Menu",
-            summary: "Browserを主Button、PageをMenu内に配置",
-            prototype: "fullscreen-button-menu",
+            id: "maximize-focus",
+            label: "Expand / Focus",
+            summary: "Maximize2とFocus。Page内の対象領域という意味を強める",
+            prototype: "fullscreen-icon-focus",
           },
         ],
       },
     ],
   },
   {
-    id: "fullscreen.guidance",
-    title: "Fullscreenの初回案内",
-    summary: "Browserが表示する上部通知の正確な範囲は取得できないため、重なりにくい位置を比較します。",
+    id: "edge.emphasis",
+    title: "接続変更をNodeのmotionで伝える",
+    summary:
+      "EndpointをDragしている間とsnap直後に、接続を失うNodeと得るNodeを異なるfeedbackで示します。",
     topics: [
       {
-        id: "fullscreen.guidanceTrigger",
-        title: "案内を出すTrigger",
-        question: "DefaultがBrowser fullscreenであることを、いつ説明するか",
+        id: "edgeReconnect.emphasis",
+        title: "Losing / gaining feedback",
+        question: "接続変更の方向を、どの視覚変化で最も自然に理解できるか",
         options: [
           {
-            id: "delayed-hover",
-            label: "一定時間Hover",
-            summary: "700ms留まった場合だけ表示",
-            prototype: "guidance-hover",
+            id: "scale-only",
+            label: "Scale",
+            summary: "失うNodeを縮小し、得るNodeを拡大",
+            prototype: "edge-emphasis-scale",
           },
           {
-            id: "first-activation",
-            label: "初回Click",
-            summary: "最初にFullscreenを使った瞬間だけ表示",
-            prototype: "guidance-first-use",
+            id: "outline-only",
+            label: "Outline",
+            summary: "失う側を破線、得る側を強いoutlineで表示",
+            prototype: "edge-emphasis-outline",
           },
           {
-            id: "hover-and-first-use",
-            label: "Hover + 初回Click",
-            summary: "事前説明と見逃し防止を両立",
-            prototype: "guidance-both",
-            recommended: true,
-          },
-        ],
-      },
-      {
-        id: "fullscreen.guidancePlacement",
-        title: "案内を出す場所",
-        question: "Browserの上部通知と競合しにくく、視線から外れない場所はどこか",
-        options: [
-          {
-            id: "anchored-popover",
-            label: "Button直下",
-            summary: "操作元との関係が明確",
-            prototype: "guidance-anchored",
-          },
-          {
-            id: "safe-top-banner",
-            label: "上部Banner",
-            summary: "Browser通知を避ける余白を取って表示",
-            prototype: "guidance-top",
-          },
-          {
-            id: "bottom-toast",
-            label: "下部Toast",
-            summary: "Browser上部通知との重なりを避ける",
-            prototype: "guidance-bottom",
-            recommended: true,
-          },
-        ],
-      },
-    ],
-  },
-  {
-    id: "edge.reconnect",
-    title: "Edge reconnectの再比較",
-    summary: "BとCの間で接続先が実際に変わるPrototypeへ修正しました。",
-    topics: [
-      {
-        id: "edgeReconnect.behavior",
-        title: "Endpointの指定",
-        question: "Edgeを掴む操作と正確なFallbackをどう組み合わせるか",
-        options: [
-          {
-            id: "nearest-endpoint",
-            label: "線を直接Drag",
-            summary: "掴んだ位置に近いEndpointを自動選択",
-            prototype: "edge-nearest",
-          },
-          {
-            id: "explicit-handles",
-            label: "Endpoint handle",
-            summary: "変更する端をHandleで明示",
-            prototype: "edge-handles",
-          },
-          {
-            id: "handles-with-toolbar",
-            label: "Handle + Toolbar",
-            summary: "Dragに加えてSelectでも接続先を変更",
-            prototype: "edge-handle-toolbar",
+            id: "scale-and-outline",
+            label: "Scale + Outline",
+            summary: "方向をmotionとshapeの両方で伝える",
+            prototype: "edge-emphasis-combined",
             recommended: true,
           },
         ],
@@ -234,8 +188,8 @@ async function writeClipboard(text: string): Promise<void> {
     <header class="spike-header">
       <div>
         <p class="spike-eyebrow">Interaction Decision Spike</p>
-        <h1>FullscreenとEdgeを、もう一段決める</h1>
-        <p>前回の決定を固定し、未決の部分だけを階層化して比較します。</p>
+        <h1>Iconと接続変更のfeedbackを決める</h1>
+        <p>採用済みの挙動を固定し、見た目とmotionだけを触って比較します。</p>
       </div>
       <a href="/" class="spike-back">
         Editorへ戻る

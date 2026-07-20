@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import { Focus, Fullscreen, Maximize2, Minimize2, Scan } from "lucide";
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import LucideGlyph from "./LucideGlyph";
 
 export type PrototypeKind =
   | "fullscreen-native"
@@ -7,6 +9,9 @@ export type PrototypeKind =
   | "fullscreen-button-stateful"
   | "fullscreen-button-dual"
   | "fullscreen-button-menu"
+  | "fullscreen-icon-corners"
+  | "fullscreen-icon-frame"
+  | "fullscreen-icon-focus"
   | "guidance-hover"
   | "guidance-first-use"
   | "guidance-both"
@@ -20,6 +25,9 @@ export type PrototypeKind =
   | "edge-nearest"
   | "edge-handles"
   | "edge-handle-toolbar"
+  | "edge-emphasis-scale"
+  | "edge-emphasis-outline"
+  | "edge-emphasis-combined"
   | "tooltip-floating"
   | "tooltip-panel";
 
@@ -42,7 +50,10 @@ const edgeStartY = ref(75);
 const edgeEndX = ref(178);
 const edgeEndY = ref(45);
 const edgeDragging = ref<"start" | "end" | null>(null);
+const edgeOriginY = ref(45);
+const edgeTransitionActive = ref(false);
 let guidanceTimer: ReturnType<typeof setTimeout> | undefined;
+let edgeTransitionTimer: ReturnType<typeof setTimeout> | undefined;
 let panPointerId: number | null = null;
 let panOrigin = { x: 0, y: 0, panX: 0, panY: 0 };
 
@@ -52,12 +63,26 @@ const isViewportDemo = computed(() =>
 const isEdgeDemo = computed(() => props.kind.startsWith("edge-"));
 const isTooltipDemo = computed(() => props.kind.startsWith("tooltip-"));
 const isFullscreenButtonDemo = computed(() => props.kind.startsWith("fullscreen-button-"));
+const isFullscreenIconDemo = computed(() => props.kind.startsWith("fullscreen-icon-"));
 const isGuidanceDemo = computed(() => props.kind.startsWith("guidance-"));
+const isEdgeEmphasisDemo = computed(() => props.kind.startsWith("edge-emphasis-"));
 const transform = computed(
   () => `translate(${panX.value}px, ${panY.value}px) scale(${scale.value})`,
 );
 const zoomLabel = computed(() => `${Math.round(scale.value * 100)}%`);
 const tooltipBelow = computed(() => tooltipNodeY.value < 66);
+const edgeCandidateY = computed(() =>
+  Math.abs(edgeEndY.value - 45) <= Math.abs(edgeEndY.value - 110) ? 45 : 110,
+);
+const fullscreenIconPair = computed(() => {
+  if (props.kind === "fullscreen-icon-frame") {
+    return { browser: Fullscreen, page: Scan };
+  }
+  if (props.kind === "fullscreen-icon-focus") {
+    return { browser: Maximize2, page: Focus };
+  }
+  return { browser: Maximize2, page: Minimize2 };
+});
 
 onMounted(() => {
   document.addEventListener("fullscreenchange", syncFullscreenState);
@@ -67,6 +92,7 @@ onBeforeUnmount(() => {
   document.body.classList.remove("spike-expanded");
   document.removeEventListener("fullscreenchange", syncFullscreenState);
   if (guidanceTimer !== undefined) clearTimeout(guidanceTimer);
+  if (edgeTransitionTimer !== undefined) clearTimeout(edgeTransitionTimer);
 });
 
 function handleWheel(event: WheelEvent): void {
@@ -154,6 +180,9 @@ function startEdgeDrag(event: PointerEvent, endpoint?: "start" | "end"): void {
     distance(pointer.x, pointer.y, edgeEndX.value, edgeEndY.value)
       ? "start"
       : "end");
+  if (edgeDragging.value === "end") edgeOriginY.value = edgeEndY.value;
+  edgeTransitionActive.value = false;
+  if (edgeTransitionTimer !== undefined) clearTimeout(edgeTransitionTimer);
   canvas.value?.setPointerCapture(event.pointerId);
   moveEdge(event);
 }
@@ -186,6 +215,8 @@ function stopEdge(): void {
       ? candidate
       : nearest,
   );
+  const changedTarget =
+    edgeDragging.value === "end" && target.y !== edgeOriginY.value;
   if (edgeDragging.value === "start") {
     edgeStartX.value = target.x;
     edgeStartY.value = target.y;
@@ -194,6 +225,22 @@ function stopEdge(): void {
     edgeEndY.value = target.y;
   }
   edgeDragging.value = null;
+  if (isEdgeEmphasisDemo.value && changedTarget) {
+    edgeTransitionActive.value = true;
+    edgeTransitionTimer = setTimeout(() => {
+      edgeTransitionActive.value = false;
+    }, 900);
+  }
+}
+
+function edgeNodeClasses(nodeY: 45 | 110): Record<string, boolean> {
+  const active =
+    isEdgeEmphasisDemo.value &&
+    (edgeDragging.value === "end" || edgeTransitionActive.value);
+  return {
+    "is-losing": active && nodeY === edgeOriginY.value,
+    "is-gaining": active && nodeY === edgeCandidateY.value && nodeY !== edgeOriginY.value,
+  };
 }
 
 function toEdgeCoordinates(
@@ -257,6 +304,7 @@ function clamp(value: number, minimum: number, maximum: number): number {
   <div
     ref="canvas"
     class="prototype-canvas"
+    :data-kind="kind"
     :class="{
       'is-expanded': isExpanded,
       'is-space-ready': isSpacePressed,
@@ -272,7 +320,35 @@ function clamp(value: number, minimum: number, maximum: number): number {
     @keyup="handleKey($event, false)"
     @blur="isSpacePressed = false"
   >
-    <template v-if="isFullscreenButtonDemo">
+    <template v-if="isFullscreenIconDemo">
+      <div class="prototype-fullscreen-content">
+        <span class="prototype-node">Idea</span>
+        <span class="prototype-arrow">→</span>
+        <span class="prototype-node">Share</span>
+      </div>
+      <div class="fullscreen-icon-stage">
+        <button
+          type="button"
+          class="fullscreen-icon-button"
+          :class="{ 'is-page': fullscreenMode === 'page' }"
+          :aria-label="`${fullscreenMode === 'browser' ? 'Browser' : 'Page'} fullscreen mode`"
+          @click="fullscreenMode = fullscreenMode === 'browser' ? 'page' : 'browser'"
+        >
+          <LucideGlyph
+            :icon="fullscreenMode === 'browser' ? fullscreenIconPair.browser : fullscreenIconPair.page"
+            :size="21"
+          />
+        </button>
+        <span class="fullscreen-icon-caption">
+          {{ fullscreenMode === "browser" ? "Browser fullscreen" : "Page fullscreen" }}
+        </span>
+      </div>
+      <p class="prototype-hint">
+        Iconを押してmodeを切替。Shapeだけでも現在のmodeを区別
+      </p>
+    </template>
+
+    <template v-else-if="isFullscreenButtonDemo">
       <div class="prototype-fullscreen-content">
         <span class="prototype-node">Idea</span>
         <span class="prototype-arrow">→</span>
@@ -423,8 +499,22 @@ function clamp(value: number, minimum: number, maximum: number): number {
         viewBox="0 0 240 150"
       >
         <rect x="20" y="55" width="42" height="40" rx="11" />
-        <rect x="178" y="25" width="42" height="40" rx="11" />
-        <rect x="178" y="90" width="42" height="40" rx="11" />
+        <rect
+          x="178"
+          y="25"
+          width="42"
+          height="40"
+          rx="11"
+          :class="edgeNodeClasses(45)"
+        />
+        <rect
+          x="178"
+          y="90"
+          width="42"
+          height="40"
+          rx="11"
+          :class="edgeNodeClasses(110)"
+        />
         <text x="41" y="80">A</text>
         <text x="199" y="50">B</text>
         <text x="199" y="115">C</text>
@@ -463,7 +553,9 @@ function clamp(value: number, minimum: number, maximum: number): number {
       </svg>
       <p class="prototype-hint">
         {{
-          kind === "edge-nearest"
+          isEdgeEmphasisDemo
+            ? "EndpointをCへDragして、接続を失うBと新しく接続するCを比較"
+            : kind === "edge-nearest"
             ? "線を掴み、BまたはCへDrag"
             : kind === "edge-handle-toolbar"
               ? "HandleでDrag。下のSelectでも変更"
@@ -573,6 +665,64 @@ function clamp(value: number, minimum: number, maximum: number): number {
   z-index: 6;
   top: 0.7rem;
   right: 0.7rem;
+}
+
+.fullscreen-icon-stage {
+  position: absolute;
+  z-index: 6;
+  top: 0.7rem;
+  right: 0.7rem;
+  display: grid;
+  justify-items: end;
+  gap: 0.35rem;
+}
+
+.fullscreen-icon-button {
+  display: grid;
+  width: 2.45rem;
+  height: 2.45rem;
+  place-items: center;
+  border: 1px solid rgb(255 255 255 / 90%);
+  border-radius: 0.75rem;
+  background: rgb(255 255 255 / 84%);
+  color: #007aff;
+  box-shadow: 0 5px 16px rgb(0 0 0 / 9%);
+  cursor: pointer;
+  transition:
+    color 180ms ease,
+    background 180ms ease,
+    transform 180ms ease;
+  backdrop-filter: blur(16px);
+}
+
+.fullscreen-icon-button.is-page {
+  background: rgb(175 82 222 / 11%);
+  color: #9843c4;
+}
+
+.fullscreen-icon-button:active {
+  transform: scale(0.92);
+  transition-duration: 80ms;
+}
+
+.fullscreen-icon-caption {
+  padding: 0.25rem 0.42rem;
+  border-radius: 0.42rem;
+  background: rgb(29 29 31 / 82%);
+  color: white;
+  font-size: 0.5625rem;
+  font-weight: 650;
+  opacity: 0;
+  transform: translateY(-0.2rem);
+  transition:
+    opacity 140ms ease,
+    transform 180ms ease;
+}
+
+.fullscreen-icon-stage:hover .fullscreen-icon-caption,
+.fullscreen-icon-stage:focus-within .fullscreen-icon-caption {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .fullscreen-stateful-button,
@@ -834,6 +984,14 @@ function clamp(value: number, minimum: number, maximum: number): number {
 .prototype-edge-svg rect {
   fill: white;
   stroke: rgb(0 122 255 / 35%);
+  transform-box: fill-box;
+  transform-origin: center;
+  transition:
+    transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    fill 180ms ease,
+    stroke 180ms ease,
+    stroke-width 180ms ease,
+    filter 220ms ease;
 }
 
 .prototype-edge-svg text {
@@ -858,6 +1016,32 @@ function clamp(value: number, minimum: number, maximum: number): number {
   fill: #fff;
   stroke: #007aff;
   stroke-width: 3;
+}
+
+[data-kind="edge-emphasis-scale"] .prototype-edge-svg rect.is-losing,
+[data-kind="edge-emphasis-combined"] .prototype-edge-svg rect.is-losing {
+  transform: scale(0.86);
+}
+
+[data-kind="edge-emphasis-scale"] .prototype-edge-svg rect.is-gaining,
+[data-kind="edge-emphasis-combined"] .prototype-edge-svg rect.is-gaining {
+  transform: scale(1.13);
+}
+
+[data-kind="edge-emphasis-outline"] .prototype-edge-svg rect.is-losing,
+[data-kind="edge-emphasis-combined"] .prototype-edge-svg rect.is-losing {
+  fill: #fff5f5;
+  stroke: #ff453a;
+  stroke-dasharray: 4 3;
+  stroke-width: 2.5;
+}
+
+[data-kind="edge-emphasis-outline"] .prototype-edge-svg rect.is-gaining,
+[data-kind="edge-emphasis-combined"] .prototype-edge-svg rect.is-gaining {
+  fill: #eef7ff;
+  stroke: #007aff;
+  stroke-width: 3;
+  filter: drop-shadow(0 4px 5px rgb(0 122 255 / 24%));
 }
 
 .edge-fallback-toolbar {
@@ -974,6 +1158,7 @@ function clamp(value: number, minimum: number, maximum: number): number {
   .fullscreen-stateful-button,
   .fullscreen-segmented,
   .fullscreen-menu-button,
+  .fullscreen-icon-button,
   .fullscreen-mode-menu,
   .guidance-fullscreen-button,
   .guidance-message,
@@ -989,7 +1174,10 @@ function clamp(value: number, minimum: number, maximum: number): number {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .prototype-tooltip-node {
+  .prototype-tooltip-node,
+  .prototype-edge-svg rect,
+  .fullscreen-icon-button,
+  .fullscreen-icon-caption {
     transition: none;
   }
 }
