@@ -10,6 +10,11 @@ import {
 import { onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from "vue";
 import AppHeader from "./components/AppHeader.vue";
 import EditorWorkspace from "./components/EditorWorkspace.vue";
+import {
+  createHistoryPreview,
+  type HistoryDirection,
+  type HistoryPreviewController,
+} from "./history-preview";
 import { createNodeInteraction, type NodeInteractionController } from "./node-interaction";
 import { createEditorPersistence } from "./persistence";
 import {
@@ -31,6 +36,7 @@ const canDownload = ref(false);
 const workspaceComponent = useTemplateRef("workspaceComponent");
 
 let nodeInteraction: NodeInteractionController | null = null;
+let historyPreview: HistoryPreviewController | null = null;
 let previewController: PreviewController | null = null;
 let viewportController: ViewportController | null = null;
 let disposeSplitPane: (() => void) | null = null;
@@ -48,6 +54,8 @@ onMounted(() => {
   const preview = requireElement<HTMLDivElement>("#preview");
   const viewportStatus = requireElement<HTMLElement>("#viewport-status");
   const errorPanel = requireElement<HTMLDivElement>("#error-panel");
+  const historyPreviewLayer = requireElement<HTMLDivElement>("#history-preview-layer");
+  const historyPreviewStatus = requireElement<HTMLElement>("#history-preview-status");
   const downloadButton = requireElement<HTMLButtonElement>("#download-button");
   const visualControls = requireElement<HTMLDivElement>("#visual-controls");
   const nodeToolbar = requireElement<HTMLDivElement>("#node-toolbar");
@@ -89,6 +97,14 @@ onMounted(() => {
   });
 
   viewportController = createViewportController({ preview, statusElement: viewportStatus });
+  historyPreview = createHistoryPreview({
+    preview,
+    layer: historyPreviewLayer,
+    statusElement: historyPreviewStatus,
+    getCurrentSource: () => workspaceComponent.value?.getSource() ?? source.value,
+    peekHistory: (direction) =>
+      workspaceComponent.value?.peekHistory(direction) ?? null,
+  });
 
   previewController = createPreviewController({
     previewElement: preview,
@@ -107,8 +123,8 @@ onMounted(() => {
     onError: () => nodeInteraction?.clearCorrespondence(),
   });
 
-  listen(undoButton, "click", () => workspaceComponent.value?.undo());
-  listen(redoButton, "click", () => workspaceComponent.value?.redo());
+  bindHistoryButton(undoButton, "undo");
+  bindHistoryButton(redoButton, "redo");
   listen(directionSelect, "change", () => nodeInteraction?.changeDirection());
   listen(shapeSelect, "change", () => nodeInteraction?.changeSelectedShape());
   listen(addNodeButton, "click", () => nodeInteraction?.addNodeAfterSelection());
@@ -131,6 +147,7 @@ onBeforeUnmount(() => {
   disposeListeners.splice(0).forEach((dispose) => dispose());
   disposeSplitPane?.();
   previewController?.destroy();
+  historyPreview?.dispose();
   viewportController?.dispose();
   nodeInteraction?.dispose();
 });
@@ -174,6 +191,25 @@ function setButtonIcon(
       "aria-hidden": "true",
     }),
   );
+}
+
+/**
+ * Pointer hoverとkeyboard focusを同じPreview操作へ対応させます。
+ * Click直前には予告を片付け、実行結果のrenderと重ならないようにします。
+ */
+function bindHistoryButton(
+  button: HTMLButtonElement,
+  direction: HistoryDirection,
+): void {
+  listen(button, "pointerenter", () => historyPreview?.show(direction));
+  listen(button, "pointerleave", () => historyPreview?.hide(direction));
+  listen(button, "focus", () => historyPreview?.show(direction));
+  listen(button, "blur", () => historyPreview?.hide(direction));
+  listen(button, "click", () => {
+    historyPreview?.hide(direction);
+    if (direction === "undo") workspaceComponent.value?.undo();
+    else workspaceComponent.value?.redo();
+  });
 }
 
 function listen<K extends keyof HTMLElementEventMap>(

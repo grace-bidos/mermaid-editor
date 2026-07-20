@@ -65,6 +65,7 @@ defineExpose({
   setSourceHighlights: (ranges: readonly SourceRange[]) => editor.setSourceHighlights(ranges),
   undo: editor.undo,
   redo: editor.redo,
+  peekHistory: editor.peekHistory,
   focus: editor.focus,
 });
 </script>
